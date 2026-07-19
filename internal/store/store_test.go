@@ -103,6 +103,22 @@ func TestAPIKeyScopesAndRevocation(t *testing.T) {
 	}
 }
 
+func TestListAPIKeysReturnsEmptyArrayWhenNoneExist(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	keys, err := st.ListAPIKeys(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys == nil || len(keys) != 0 {
+		t.Fatalf("expected a non-nil empty API key list, got %#v", keys)
+	}
+}
+
 func TestActionEventCanBeReleasedAfterFailure(t *testing.T) {
 	st, err := Open(t.TempDir())
 	if err != nil {

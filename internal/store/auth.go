@@ -104,7 +104,7 @@ func (s *Store) ListAPIKeys(ctx context.Context) ([]domain.APIKey, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var keys []domain.APIKey
+	keys := make([]domain.APIKey, 0)
 	for rows.Next() {
 		var key domain.APIKey
 		var scopes string

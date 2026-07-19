@@ -227,14 +227,16 @@ function Login({ onComplete }: { onComplete: () => Promise<void> }) {
   }
   return (
     <main className="login-shell">
-      <div className="login-brand"><div className="brand-lockup"><BrandMark /><div><b>CDT MONITOR</b><span>CONTROL PLANE</span></div></div><p>阿里云 CDT 流量与实例自动化控制台</p></div>
-      <form className="glass-card auth-card" onSubmit={submit}>
-        <div className="large-icon"><LockKeyhole /></div>
-        <p className="eyebrow">ADMIN ACCESS</p><h1>欢迎回来</h1><p className="muted">使用管理员凭据进入控制台</p>
-        <PasswordField label="管理员密码" value={password} visible={visible} onVisible={() => setVisible(!visible)} onChange={setPassword} autoComplete="current-password" />
-        {error && <div className="inline-error"><AlertTriangle size={16} />{error}</div>}
-        <button className="button button--primary button--full" disabled={busy || !password}>{busy ? <LoaderCircle className="spin" size={18} /> : <ArrowRight size={18} />}安全登录</button>
-      </form>
+      <div className="login-card-stack">
+        <div className="login-brand"><div className="brand-lockup"><BrandMark /><div><b>CDT MONITOR</b><span>CONTROL PLANE</span></div></div><p>阿里云 CDT 流量与实例自动化控制台</p></div>
+        <form className="glass-card auth-card" onSubmit={submit}>
+          <div className="large-icon"><LockKeyhole /></div>
+          <p className="eyebrow">ADMIN ACCESS</p><h1>欢迎回来</h1><p className="muted">使用管理员凭据进入控制台</p>
+          <PasswordField label="管理员密码" value={password} visible={visible} onVisible={() => setVisible(!visible)} onChange={setPassword} autoComplete="current-password" />
+          {error && <div className="inline-error"><AlertTriangle size={16} />{error}</div>}
+          <button className="button button--primary button--full" disabled={busy || !password}>{busy ? <LoaderCircle className="spin" size={18} /> : <ArrowRight size={18} />}安全登录</button>
+        </form>
+      </div>
     </main>
   )
 }
@@ -292,16 +294,17 @@ function Dashboard({ status, config, onRefresh, onSettings, onHistory, notify, o
         <button className="empty-state" onClick={onSettings}><Cloud /><h3>添加第一个云端实例</h3><p>进入设置完成 AccessKey 与实例信息配置</p><span>打开设置<ChevronRight size={16} /></span></button>
       ) : (
         <section className="account-grid">
-          {status.accounts.map((account) => <AccountCard key={account.id} account={account} busy={busy[account.id]} keepAlive={config.keep_alive} onAction={(action) => void runAction(account, action)} onHistory={() => onHistory(account)} />)}
+          {status.accounts.map((account) => <AccountCard key={account.id} account={account} busy={busy[account.id]} keepAlive={config.keep_alive} billingEnabled={config.enable_billing} onAction={(action) => void runAction(account, action)} onHistory={() => onHistory(account)} />)}
         </section>
       )}
     </main>
   )
 }
 
-function AccountCard({ account, busy, keepAlive, onAction, onHistory }: { account: AccountSummary; busy?: string; keepAlive: boolean; onAction: (action: 'start' | 'stop' | 'refresh') => void; onHistory: () => void }) {
+function AccountCard({ account, busy, keepAlive, billingEnabled, onAction, onHistory }: { account: AccountSummary; busy?: string; keepAlive: boolean; billingEnabled: boolean; onAction: (action: 'start' | 'stop' | 'refresh') => void; onHistory: () => void }) {
   const statusTone = statusClass(account.instance_status)
   const currency = account.currency === 'USD' ? '$' : '¥'
+  const hasBilling = account.monthly_cost !== undefined || account.balance !== undefined
   return (
     <article className={`glass-card account-card ${account.over_threshold ? 'account-card--alert' : ''}`}>
       <header className="account-card__header">
@@ -312,7 +315,7 @@ function AccountCard({ account, busy, keepAlive, onAction, onHistory }: { accoun
       <div className="traffic-value"><div><span>本月 CDT 流量</span><strong>{account.flow_used.toFixed(2)}</strong><small> / {account.flow_total.toFixed(0)} GB</small></div><button className="mini-icon" onClick={onHistory} aria-label="查看历史流量"><HistoryIcon size={17} /></button></div>
       <div className="progress-track"><i style={{ width: `${Math.min(100, account.percentage)}%` }} className={account.over_threshold ? 'danger' : account.percentage >= account.threshold * .8 ? 'warning' : ''} /></div>
       <div className="progress-meta"><span>{account.percentage.toFixed(2)}% 已使用</span><span>阈值 {account.threshold}%</span></div>
-      {(account.monthly_cost !== undefined || account.balance !== undefined) && <div className="billing-row"><span><CircleDollarSign size={15} />实例费用 <b>{account.monthly_cost === undefined ? '—' : `${currency}${account.monthly_cost.toFixed(2)}`}</b></span><span>可用余额 <b>{account.balance === undefined ? '—' : `${currency}${account.balance.toFixed(2)}`}</b></span></div>}
+      {billingEnabled && <div className="billing-row"><div className="billing-item"><span><CircleDollarSign size={15} />本月费用</span><b>{account.monthly_cost === undefined ? '待同步' : `${currency}${account.monthly_cost.toFixed(2)}`}</b></div><div className="billing-item"><span>账户余额</span><b>{account.balance === undefined ? '待同步' : `${currency}${account.balance.toFixed(2)}`}</b></div><small className={account.billing_error ? 'billing-error' : ''}>{account.billing_error || (hasBilling ? '账单数据已同步' : '账单数据将在实例刷新后显示')}</small></div>}
       <footer className="account-card__footer">
         <span className={account.stale ? 'stale' : ''}><Clock3 size={14} />{account.last_updated ? formatTime(account.last_updated) : '等待首次同步'}</span>
         <div className="control-group">
@@ -333,7 +336,15 @@ function SettingsPanel({ initial, onClose, onSaved, notify }: { initial: Config;
     setBusy(true)
     try {
       await api('/api/v1/config', { method: 'PUT', body: JSON.stringify(config) })
-      notify('配置已安全保存', 'success'); onSaved(config)
+      if (config.enable_billing && !initial.enable_billing) {
+        const refreshes = config.accounts.filter((account) => account.id > 0).map((account) => api(`/api/v1/accounts/${account.id}/refresh`, { method: 'POST', body: '{}' }))
+        const results = await Promise.allSettled(refreshes)
+        if (results.some((result) => result.status === 'fulfilled')) notify('配置已保存，账单同步已开始', 'success')
+        else notify('配置已保存，账单将在下次同步时更新', 'info')
+      } else {
+        notify('配置已安全保存', 'success')
+      }
+      onSaved(config)
     } catch (error) { notify(error instanceof Error ? error.message : '保存失败', 'error') }
     finally { setBusy(false) }
   }
@@ -422,18 +433,32 @@ function APIKeySettings({ notify }: { notify: (message: string, tone?: Toast['to
   const [name, setName] = useState('桌面小组件')
   const [scopes, setScopes] = useState(['widget:read'])
   const [token, setToken] = useState('')
-  const load = useCallback(() => api<{ keys: APIKeyRecord[] }>('/api/v1/api-keys').then((value) => setKeys(value.keys)), [])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const value = await api<{ keys?: APIKeyRecord[] }>('/api/v1/api-keys')
+      setKeys(Array.isArray(value.keys) ? value.keys : [])
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'API Key 列表加载失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
   useEffect(() => { void load() }, [load])
   const create = async () => {
     try { const result = await api<{ token: string }>('/api/v1/api-keys', { method: 'POST', body: JSON.stringify({ name, scopes }) }); setToken(result.token); await load() }
     catch (error) { notify(error instanceof Error ? error.message : '创建失败', 'error') }
   }
   const toggle = (scope: string) => setScopes((current) => current.includes(scope) ? current.filter((value) => value !== scope) : [...current, scope])
-  const revoke = async (id: number) => { await api(`/api/v1/api-keys/${id}`, { method: 'DELETE', body: '{}' }); await load(); notify('API Key 已撤销', 'success') }
+  const revoke = async (id: number) => { try { await api(`/api/v1/api-keys/${id}`, { method: 'DELETE', body: '{}' }); await load(); notify('API Key 已撤销', 'success') } catch (cause) { notify(cause instanceof Error ? cause.message : '撤销失败', 'error') } }
   return <div className="settings-section"><SectionTitle icon={<KeyRound />} title="API Key" subtitle="MOBILE & WIDGET ACCESS" />
     <div className="key-create"><Field label="名称"><input value={name} onChange={(event) => setName(event.target.value)} /></Field><div className="scope-row">{[['widget:read', '读取状态'], ['instance:control', '控制实例'], ['cron:run', '触发任务']].map(([scope, label]) => <label key={scope} className={scopes.includes(scope) ? 'scope-chip active' : 'scope-chip'}><input type="checkbox" checked={scopes.includes(scope)} onChange={() => toggle(scope)} />{label}</label>)}</div><button className="button button--primary" disabled={!name || scopes.length === 0} onClick={() => void create()}><Plus />创建 Key</button></div>
     {token && <div className="token-reveal"><ShieldCheck /><div><b>仅显示一次</b><code>{token}</code></div><IconButton label="复制" onClick={() => { void navigator.clipboard.writeText(token); notify('已复制到剪贴板', 'success') }}><Copy /></IconButton></div>}
-    <div className="key-list">{keys.map((key) => <div className={`key-row ${key.revoked_at ? 'disabled' : ''}`} key={key.id}><div className="key-icon"><KeyRound /></div><div><b>{key.name}</b><span>{key.scopes.join(' · ')}</span></div><time>{key.last_used_at ? `最近使用 ${formatDate(key.last_used_at)}` : `创建于 ${formatDate(key.created_at)}`}</time>{!key.revoked_at && <IconButton label="撤销" tone="danger" onClick={() => void revoke(key.id)}><Trash2 /></IconButton>}</div>)}</div>
+    {error && <div className="inline-error"><AlertTriangle size={16} />{error}<button className="text-button" onClick={() => void load()}>重试</button></div>}
+    {loading ? <div className="subtle-empty"><LoaderCircle className="spin" />加载 API Key</div> : <div className="key-list">{keys.map((key) => <div className={`key-row ${key.revoked_at ? 'disabled' : ''}`} key={key.id}><div className="key-icon"><KeyRound /></div><div><b>{key.name}</b><span>{(Array.isArray(key.scopes) ? key.scopes : []).join(' · ') || '未配置权限'}</span></div><time>{key.last_used_at ? `最近使用 ${formatDate(key.last_used_at)}` : `创建于 ${formatDate(key.created_at)}`}</time>{!key.revoked_at && <IconButton label="撤销" tone="danger" onClick={() => void revoke(key.id)}><Trash2 /></IconButton>}</div>)}</div>}
   </div>
 }
 
