@@ -1,48 +1,52 @@
-name: Auto Release
+name: Automatic Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, for example v2.0.0'
+        required: true
+        type: string
   push:
-    branches:
-      - main
+    branches: [main]
+    paths-ignore: ['docs/**']
+
+permissions:
+  contents: write
 
 jobs:
-  release:
+  tag:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Need full history to list tags
-
-      - name: Generate next version tag
-        id: generate_tag
+          fetch-depth: 0
+      - name: Calculate version
+        id: version
+        shell: bash
         run: |
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -z "$LATEST_TAG" ]; then
-            NEXT_TAG="v1.6.0"
+          if [ -n "${{ inputs.version }}" ]; then
+            version="${{ inputs.version }}"
           else
-            # Extract major.minor.patch
-            if [[ "$LATEST_TAG" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-              MAJOR="${BASH_REMATCH[1]}"
-              MINOR="${BASH_REMATCH[2]}"
-              PATCH="${BASH_REMATCH[3]}"
-              NEXT_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+            latest=$(git tag --list 'v[0-9]*' --sort=-version:refname | head -n1)
+            if [ -z "$latest" ]; then
+              version="v2.0.0"
             else
-              # Fallback if the previous tag format isn't standard
-              NEXT_TAG="v1.6.0"
+              IFS='.' read -r major minor patch <<< "${latest#v}"
+              if [ "$major" -lt 2 ]; then
+                version="v2.0.0"
+              else
+                version="v${major}.${minor}.$((patch + 1))"
+              fi
             fi
           fi
-          echo "tag=$NEXT_TAG" >> $GITHUB_OUTPUT
-
-      - name: Create or Update Release
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ steps.generate_tag.outputs.tag }}
-          name: "Release ${{ steps.generate_tag.outputs.tag }}"
-          body: "Auto-generated release for the latest commit."
-          allowUpdates: false
-          makeLatest: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Create tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"

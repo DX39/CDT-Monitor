@@ -1,0 +1,90 @@
+export type Account = {
+  id: number
+  access_key_id: string
+  access_key_secret?: string
+  secret_configured: boolean
+  region_id: string
+  instance_id: string
+  max_traffic: number
+  schedule_enabled: boolean
+  start_time: string
+  stop_time: string
+  remark: string
+  site_type: 'china' | 'international'
+}
+
+export type Config = {
+  admin_password?: string
+  traffic_threshold: number
+  enable_schedule_notification: boolean
+  shutdown_mode: 'KeepCharging' | 'StopCharging'
+  threshold_action: 'stop_and_notify' | 'notify_only'
+  keep_alive: boolean
+  api_interval: number
+  enable_billing: boolean
+  timezone: string
+  notifications: {
+    email: { enabled: boolean; to: string; host: string; port: number; username: string; password?: string; password_configured: boolean; security: string }
+    telegram: { enabled: boolean; token?: string; token_configured: boolean; chat_id: string; proxy_type: string; proxy_url: string; proxy_ip: string; proxy_port: string; proxy_user: string; proxy_pass?: string; proxy_password_configured: boolean }
+    webhook: { enabled: boolean; url: string; method: string; request_type: string; headers?: string; body: string }
+  }
+  accounts: Account[]
+}
+
+export type AccountSummary = {
+  id: number
+  account: string
+  remark: string
+  region: string
+  region_name: string
+  flow_total: number
+  flow_used: number
+  percentage: number
+  threshold: number
+  over_threshold: boolean
+  instance_status: string
+  last_updated: string
+  stale: boolean
+  monthly_cost?: number
+  balance?: number
+  currency?: string
+  billing_error?: string
+}
+
+export type StatusResponse = { accounts: AccountSummary[]; system_last_run: string }
+export type Job = { id: string; status: 'queued' | 'running' | 'completed' | 'failed'; result?: string; error?: string }
+export type History = { hourly: { at: string; traffic: number }[]; daily: { at: string; traffic: number }[] }
+export type LogEntry = { id: number; type: string; message: string; created_at: string }
+export type APIKeyRecord = { id: number; name: string; scopes: string[]; created_at: string; last_used_at?: string; expires_at?: string; revoked_at?: string }
+
+export const emptyAccount = (): Account => ({
+  id: 0,
+  access_key_id: '',
+  access_key_secret: '',
+  secret_configured: false,
+  region_id: 'cn-hongkong',
+  instance_id: '',
+  max_traffic: 200,
+  schedule_enabled: false,
+  start_time: '08:00',
+  stop_time: '23:30',
+  remark: '',
+  site_type: 'china',
+})
+
+export const defaultConfig = (): Config => ({
+  traffic_threshold: 95,
+  enable_schedule_notification: false,
+  shutdown_mode: 'KeepCharging',
+  threshold_action: 'stop_and_notify',
+  keep_alive: false,
+  api_interval: 600,
+  enable_billing: false,
+  timezone: 'Asia/Shanghai',
+  notifications: {
+    email: { enabled: false, to: '', host: '', port: 465, username: '', password: '', password_configured: false, security: 'ssl' },
+    telegram: { enabled: false, token: '', token_configured: false, chat_id: '', proxy_type: 'none', proxy_url: '', proxy_ip: '', proxy_port: '', proxy_user: '', proxy_pass: '', proxy_password_configured: false },
+    webhook: { enabled: false, url: '', method: 'GET', request_type: 'JSON', headers: '', body: '' },
+  },
+  accounts: [],
+})

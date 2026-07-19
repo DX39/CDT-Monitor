@@ -1,189 +1,234 @@
-# CDT-Monitor 🌩️
+# CDT Monitor v2 · Dev
 
-> **阿里云 CDT 流量监控与自动化熔断解决方案**
-> 
-> 旨在通过集成流量追踪、阈值熔断机制及抢占式实例保活策略，优化云端资源成本管理。
+CDT Monitor 是一个用于阿里云 CDT 流量监控、ECS 实例自动化控制和费用观察的单机控制台。本 `dev` 分支正在把原 PHP 版本重构为一个可直接运行的 Go 程序：HTTP 服务、定时调度器、并发 Worker、SQLite、API 和前端静态资源全部集成在同一个进程中。
 
-## 📖 项目概述 (Introduction)
+> 当前分支：`dev`
+>
+> 目标平台：Linux / Windows / macOS，amd64 / arm64
+> 数据库：SQLite WAL，不需要 MySQL 或 Redis
 
-**CDT-Monitor** 是一款专为阿里云云数据传输（CDT）用户研发的轻量级流量监控与管理系统。该系统基于 **PHP** 与 **SQLite** 架构设计，无需复杂的数据库配置即可快速部署。
+## 功能
 
-其核心价值在于自动化解决云资源管理中的“黑天鹅”事件：**通过实时流量熔断机制防止 CDT 免费额度超支扣费，利用智能保活算法解决抢占式实例非预期释放导致的业务中断，并提供精准的定时任务调度，是个人开发者与中小团队控制云成本的理想管家。**
+- 多阿里云账号、地域和 ECS 实例集中管理。
+- CDT 国内/海外流量分类聚合与用量历史图表。
+- 可配置流量阈值，支持“停机并通知”和“仅通知”。
+- 普通停机 `KeepCharging` 和节省停机 `StopCharging`。
+- 每日定时开关机，任务延迟或进程重启后提供短窗口补偿。
+- 抢占式实例保活，阈值熔断优先于保活。
+- Web 控制台手动开机、关机和刷新。
+- SMTP、Telegram Bot、自定义 Webhook 通知；Telegram 支持自定义反代和 SOCKS5。
+- 中国站和国际站 BSS 端点、CNY/USD 账单与余额缓存。
+- 首次安装向导、管理员 Session、登录限速、CSRF 防护。
+- AES-GCM 加密 AccessKey Secret 与通知凭据，管理员密码使用 Argon2id。
+- 带 scope、可撤销的 API Key，供 Android、iOS 和桌面小组件使用。
+- 自动清理日志/统计，健康检查和 JSON 容器日志。
+- 原 PHP SQLite 数据库可原地升级；启动前请先备份 `data/data.sqlite`。
 
-## 📸 界面预览 (Interface Preview)
+## 架构
 
-| 登陆界面 | 初始化 |
-| --- | --- |
-| ![https://assets.qninq.cn/qning/tzONAKQq.webp](https://assets.qninq.cn/qning/tzONAKQq.webp) | ![https://assets.qninq.cn/qning/xDFaQTTX.webp](https://assets.qninq.cn/qning/xDFaQTTX.webp) |
-
-| 后台页面 | 后台页面 |
-| --- | --- |
-| ![https://assets.qninq.cn/qning/WQG9I8qC.webp](https://assets.qninq.cn/qning/WQG9I8qC.webp) | ![https://assets.qninq.cn/qning/ipOStKeK.webp](https://assets.qninq.cn/qning/ipOStKeK.webp) |
-
-| 图表展示 | 邮件展示 |
-| --- | --- |
-| ![https://assets.qninq.cn/qning/a5zqmuJQ.webp](https://assets.qninq.cn/qning/a5zqmuJQ.webp) | ![https://assets.qninq.cn/qning/6KEjK7bw.webp](https://assets.qninq.cn/qning/6KEjK7bw.webp) |
-## ✨ 核心功能 (Core Features)
-
-* **便捷部署架构** ：基于 SQLite 构建，无需配置 MySQL 或 Redis 等外部数据库，支持数据私有化存储与快速部署。
-* **多账户聚合监控** ：提供统一管理面板，实现对多个阿里云账户下 CDT 流量使用情况及实例运行状态的集中监控。
-* **流量熔断机制** ：
-  * **阈值控制** ：支持自定义流量使用阈值（例如 95%）。
-  * **自动化停机** ：当流量超出预设阈值时自动触发实例停机，支持配置 **普通停机** 或 **节省停机（停止计费）** 模式。
-  * **告警通知** ：集成 SMTP 协议，支持通过邮件发送即时告警通知。
-* **实例保活策略** ：内置保活逻辑算法，旨在防止抢占式实例在预定运行时间段内被异常回收。
-* **定时任务管理** ：支持针对特定实例设定每日自动开关机计划。
-* **现代化用户界面** ：采用原生 Tailwind CSS 构建，提供统一的响应式布局，确保移动端与桌面端的兼容性与视觉一致性。
-* **安全保障体系** ：内置初始化配置向导，确保敏感配置信息的本地加密存储与安全性。
-
-## 🛠️ 环境要求 (System Requirements)
-
-* **PHP** 版本 >= 8.0
-* **Composer** 依赖管理工具
-* **PHP 扩展** ：`pdo_sqlite`, `curl`, `json`
-* **Web 服务器** ：Nginx / Apache / OpenLiteSpeed
-
-## 🚀 安装指南 (Installation Guide)
-
-### 1. 获取源代码
-
-```
-git clone https://github.com/wang4386/CDT-Monitor.git
-cd CDT-Monitor
+```text
+浏览器 / 小组件
+       │
+       ▼
+Go HTTP API ──► SQLite WAL 状态快照
+       │
+       ├──► 内置调度器 ──► 持久化 Job ──► Worker Pool ──► 阿里云 RPC
+       │                                      │
+       └──► 管理操作                           └──► Notification Outbox
+                                                        │
+                                             SMTP / Telegram / Webhook
 ```
 
-### 2. 安装依赖包
+状态查询只读取 SQLite 快照，不在页面请求内等待阿里云 API。刷新和控制返回 `202 + job_id`，由后台 Worker 执行。调度租约和动作事件键用于防止任务重叠、重复开关机和重复阈值通知。
 
-```
-composer install --no-dev
-```
+更完整的现状与技术决策见 [架构分析](docs/architecture-analysis.md)。
 
-### 3. 配置目录权限
+## Docker 安装
 
-请确保 Web 服务器用户对项目根目录及 `data.sqlite` 文件拥有 **写入权限** 。
+### Docker Compose
 
-```
-# 示例：假设 Web 根目录为 /www/wwwroot/yoursite.com
-chown -R www:www /www/wwwroot/yoursite.com
-chmod -R 755 /www/wwwroot/yoursite.com
-```
-
-> **🛡️ Nginx 安全配置（重要）**
-> 
-> 为防止数据库文件被下载，请务必在 Nginx 配置文件（server 段）中添加以下伪静态规则以禁止访问 `/data/` 目录：
-> 
-> ```
-> location ^~ /data/ {
->     deny all;
->     return 403;
-> }
-> ```
-
-### 4. 系统初始化
-
-通过浏览器访问站点（例如 `https://monitor.yourdomain.com`）。首次访问将自动进入  **初始化向导** ，请按照提示完成管理员密码及相关参数的配置。
-
-## 🐳 Docker 部署 (Docker Deployment)
-
-无需配置 PHP 环境，直接使用 Docker 即可快速部署。Docker 版本已内置定时任务，**无需** 额外配置 Crontab。
-
-### 方式一：Docker Compose (推荐)
-
-创建一个 `docker-compose.yml` 文件：
-
-```
+```yaml
 services:
   cdt-monitor:
-    image: qninq/cdt-monitor:latest
-    # build: .
+    image: ghcr.io/wang4386/cdt-monitor:dev
     container_name: cdt-monitor
-    restart: always
+    restart: unless-stopped
+    init: true
     ports:
-      - "43210:80"  # 将容器的 80 端口映射到宿主机的 43210 端口
-    volumes:
-      # 持久化数据目录，确保重启后配置和数据库不丢失
-      - ./data:/var/www/html/data
-      # 可选：如果你想查看 Docker 内部的日志
-      # - ./logs:/var/log/nginx
+      - "43210:8080"
     environment:
-      - TZ=Asia/Shanghai  # 设置时区，对 Cron 任务很重要
+      CDT_DATA_DIR: /data
+      CDT_LISTEN: :8080
+      CDT_WORKERS: 4
+      TZ: Asia/Shanghai
+    volumes:
+      - cdt-data:/data
+
+volumes:
+  cdt-data:
 ```
 
-启动服务：
+启动：
 
-```
-docker-compose up -d
+```bash
+docker compose up -d
+docker compose logs -f cdt-monitor
 ```
 
-### 方式二：Docker CLI
+浏览器访问 `http://服务器地址:43210`，首次访问会进入安全安装向导。
 
-```
+### Docker CLI
+
+```bash
 docker run -d \
-    --name cdt-monitor \
-    --restart always \
-    -p 43210:80 \
-    -v $(pwd)/data:/var/www/html/data \
-    -e TZ=Asia/Shanghai \
-    qninq/cdt-monitor:latest
+  --name cdt-monitor \
+  --restart unless-stopped \
+  -p 43210:8080 \
+  -v cdt-data:/data \
+  ghcr.io/wang4386/cdt-monitor:dev
 ```
 
-部署完成后，访问 `http://服务器IP:43210` 即可开始使用。
+运行镜像使用非 root 用户和 `scratch` 基础层，不包含 Nginx、PHP-FPM、Cron、shell 或包管理器。HTTPS 请求所需的 CA 证书会单独复制进镜像。
 
-## ⚙️ 自动化任务配置 (Automation Setup)
+## 二进制安装
 
-> **注意：** 如果您使用 Docker 部署，请跳过此步骤（容器已内置自动任务）。
+从 GitHub Releases 下载对应平台压缩包，解压后运行：
 
-CDT-Monitor 依赖定时任务以实现精确的流量监控与实例保活功能。建议执行频率为 **每分钟一次** 。
-
-您可以根据服务器环境选择以下任意一种方式：
-
-### 方式一：命令行 Crontab (推荐)
-
-最稳定且高效的方式，适合有服务器 SSH 权限的用户。
-
-```
-# CDT-Monitor 核心任务
-* * * * * /usr/bin/php /path/to/your/project/monitor.php > /dev/null 2>&1
+```bash
+./cdt-monitor serve --data ./data --listen :8080
 ```
 
-> **注意** ：请将路径替换为实际的项目部署路径，并确保使用 PHP CLI 版本执行。
+Windows：
 
-### 方式二：URL 监控 (Web Cron)
-
-如果您使用虚拟主机或希望通过第三方监控服务（如 UptimeRobot, 宝塔计划任务-访问URL）来触发，可以使用此方式。
-
-**监控地址格式：**
-
-```
-https://您的域名/monitor.php?key=您的管理员密码
+```powershell
+.\cdt-monitor.exe serve --data .\data --listen :8080
 ```
 
-> **注意** ：
-> 
-> 1. 为了安全起见，Web 访问必须携带 `key` 参数，该参数值即为您初始化时设置的 **管理员密码** 。
-> 2. 如果密码错误，系统将返回 403 禁止访问。
+支持的命令：
 
-无论使用哪种方式，`monitor.php` 均内置了智能缓存机制，高频执行不会导致 API 调用额度的过度消耗。
+| 命令 | 用途 |
+| --- | --- |
+| `serve` | 启动 Web、调度器和 Worker，默认命令 |
+| `run-once` | 创建一轮监控任务并等待执行结束 |
+| `migrate` | 执行数据库迁移并退出 |
+| `version` | 输出版本、Commit 和平台 |
+| `healthcheck` | 请求本机 `/healthz`，供容器健康检查使用 |
 
-## 💡 功能详解 (Advanced Documentation)
+环境变量：
 
-### 停机模式说明
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `CDT_DATA_DIR` | `./data` | SQLite 和 `master.key` 所在目录 |
+| `CDT_LISTEN` | `:8080` | HTTP 监听地址 |
+| `CDT_WORKERS` | `4` | 后台任务并发数 |
+| `TZ` | 系统时区 | 容器环境时区；业务时区以控制台设置为准 |
 
-* **普通停机 (KeepCharging)** ：停止实例后保留计算资源与 IP 地址，持续产生费用，具备快速启动特性。
-* **节省停机 (StopCharging)** ：释放计算资源并停止计费。**注意：固定公网 IP 地址可能会在重启后发生变更，但弹性公网 IP (EIP) 地址保持不变。建议用于成本控制场景。**
+## 从 PHP 版本升级
 
-### 抢占式实例保活机制
+1. 停止旧容器或 PHP Cron，避免两个版本同时执行自动化任务。
+2. 完整备份旧 `data/`，尤其是 `data/data.sqlite`。
+3. 将同一数据目录挂载到新版 `/data`。
+4. 启动新版。程序会补齐 schema，并自动把旧明文 AccessKey Secret、SMTP 密码、Telegram Token 和 Webhook Headers 加密。
+5. 使用原管理员密码登录；首次成功登录会把旧明文管理员密码升级为 Argon2id。
+6. 检查实例、历史流量、账单、定时计划和通知配置。
+7. 创建具有 `cron:run` scope 的专用 API Key，再替换旧的 URL Cron。
 
-该机制专为**抢占式实例**设计。系统激活后，将实时监控处于“预定运行时间段”内的实例状态。若检测到非预期的关机状态（如被云平台释放），系统将尝试自动重启实例以维持服务可用性。
+新版不会重排账号或日志自增 ID。账号主键保持稳定，历史统计不会因为保存配置而重新绑定。
 
-* *注：为防止状态频繁震荡，触发保活操作后将执行 30 分钟的冷却期。*
+> `data/master.key` 是解密凭据的必要文件，必须与 SQLite 一起备份。丢失该文件后无法恢复已加密 Secret。
 
-## 🤝 参与贡献 (Contributing)
+## API Key 与小组件 API
 
-欢迎提交 Issue 或 Pull Request 以协助改进本项目。
+在“设置 → API Key”中创建 Key。Token 只显示一次，数据库只保存 SHA-256 哈希。
 
-## 📄 开源协议 (License)
+权限：
 
-本项目遵循 [MIT License](https://mit-license.org/ "null") 开源协议。
+| Scope | 能力 |
+| --- | --- |
+| `widget:read` | 读取小组件摘要、状态与历史 |
+| `instance:control` | 手动刷新、开机和关机 |
+| `cron:run` | 调用兼容 URL Cron |
 
-<p align="center">Created by <a href="https://qninq.cn/">青柠·倾城于你</a></p>
+请求示例：
+
+```bash
+curl -H "Authorization: Bearer cdt_xxx" \
+  http://127.0.0.1:8080/api/v1/widget/summary
+```
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer cdt_xxx" \
+  http://127.0.0.1:8080/api/v1/accounts/1/actions/start
+```
+
+主要接口：
+
+```text
+GET  /api/v1/widget/summary
+GET  /api/v1/status
+GET  /api/v1/accounts/{id}/history
+POST /api/v1/accounts/{id}/refresh
+POST /api/v1/accounts/{id}/actions/start
+POST /api/v1/accounts/{id}/actions/stop
+GET  /api/v1/jobs/{job_id}
+GET  /healthz
+GET  /readyz
+```
+
+兼容 URL Cron：
+
+```text
+GET /monitor.php?key=<具有 cron:run scope 的 API Key>
+```
+
+不再支持把管理员密码放在 URL 中。
+
+## 本地开发
+
+要求 Go 1.24 和 Node.js 22：
+
+```bash
+cd web
+npm ci
+npm run build
+cd ..
+go test ./...
+go run ./cmd/cdt-monitor serve --data ./tmp-data
+```
+
+开发前端时可以使用 `npm run dev`，API 请求需要由 Vite 代理或使用同源构建产物测试。
+
+生产构建：
+
+```bash
+cd web && npm ci && npm run build && cd ..
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o cdt-monitor ./cmd/cdt-monitor
+```
+
+## GitHub Actions
+
+| Workflow | 触发条件 | 输出 |
+| --- | --- | --- |
+| `CI` | `dev`/`main` push、PR | 前端构建、Go race test、vet、Linux build |
+| `Automatic Release` | `main` push 或手动 | 自动计算 patch 版本并创建 tag |
+| `Release Binaries` | `v*.*.*` tag | Linux/Windows/macOS 的 amd64/arm64 压缩包和 GitHub Release |
+| `Container Image` | `dev`/`main`/tag | GHCR 的 linux/amd64 + linux/arm64 manifest |
+
+镜像标签：
+
+- `dev` 分支：`ghcr.io/wang4386/cdt-monitor:dev`
+- `main` 分支：`ghcr.io/wang4386/cdt-monitor:latest`
+- Release：`ghcr.io/wang4386/cdt-monitor:v2.x.x`
+
+## 安全建议
+
+- 公网部署必须在反向代理或网关层启用 HTTPS。
+- 阿里云 RAM 用户只授予 CDT 查询、ECS 查询/启停和可选 BSS 查询所需的最小权限。
+- 小组件只使用 `widget:read` Key；不要把 `instance:control` Key 放入公开脚本。
+- 定期撤销不再使用的 Key，并备份整个数据目录。
+- 不要把 `data/`、日志或 API Token 提交到 Git。
+
+## License
+
+[MIT](LICENSE)
