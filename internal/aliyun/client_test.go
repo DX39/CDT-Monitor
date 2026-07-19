@@ -35,3 +35,14 @@ func TestTrafficResponseAggregation(t *testing.T) {
 		t.Fatalf("traffic=%v err=%v", traffic, err)
 	}
 }
+
+func TestAsSliceSupportsSingleBssItem(t *testing.T) {
+	items := asSlice(map[string]any{"Item": map[string]any{"PretaxAmount": "23.456"}})
+	if len(items) != 1 {
+		t.Fatalf("expected one BSS item, got %#v", items)
+	}
+	item, ok := items[0].(map[string]any)
+	if !ok || number(item["PretaxAmount"]) != 23.456 {
+		t.Fatalf("unexpected BSS item: %#v", items[0])
+	}
+}

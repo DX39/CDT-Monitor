@@ -310,12 +310,14 @@ function AccountCard({ account, busy, keepAlive, billingEnabled, onAction, onHis
       <header className="account-card__header">
         <div className={`status-icon ${statusTone}`}><Server size={20} /></div>
         <div className="account-title"><h3>{account.remark || account.account}</h3><span>{account.region_name}</span></div>
-        <div className={`status-pill ${statusTone}`}><i />{statusLabel(account.instance_status)}</div>
+        <div className="account-card__side">
+          <div className={`status-pill ${statusTone}`}><i />{statusLabel(account.instance_status)}</div>
+          {billingEnabled && <div className="account-billing" aria-label="账单与余额"><div><span>本月费用</span><b>{account.monthly_cost === undefined ? '待同步' : `${currency}${account.monthly_cost.toFixed(2)}`}</b></div><div><span>账户余额</span><b>{account.balance === undefined ? '待同步' : `${currency}${account.balance.toFixed(2)}`}</b></div><small className={account.billing_error ? 'billing-error' : ''}>{account.billing_error || (hasBilling ? '已同步' : '待同步')}</small></div>}
+        </div>
       </header>
       <div className="traffic-value"><div><span>本月 CDT 流量</span><strong>{account.flow_used.toFixed(2)}</strong><small> / {account.flow_total.toFixed(0)} GB</small></div><button className="mini-icon" onClick={onHistory} aria-label="查看历史流量"><HistoryIcon size={17} /></button></div>
       <div className="progress-track"><i style={{ width: `${Math.min(100, account.percentage)}%` }} className={account.over_threshold ? 'danger' : account.percentage >= account.threshold * .8 ? 'warning' : ''} /></div>
       <div className="progress-meta"><span>{account.percentage.toFixed(2)}% 已使用</span><span>阈值 {account.threshold}%</span></div>
-      {billingEnabled && <div className="billing-row"><div className="billing-item"><span><CircleDollarSign size={15} />本月费用</span><b>{account.monthly_cost === undefined ? '待同步' : `${currency}${account.monthly_cost.toFixed(2)}`}</b></div><div className="billing-item"><span>账户余额</span><b>{account.balance === undefined ? '待同步' : `${currency}${account.balance.toFixed(2)}`}</b></div><small className={account.billing_error ? 'billing-error' : ''}>{account.billing_error || (hasBilling ? '账单数据已同步' : '账单数据将在实例刷新后显示')}</small></div>}
       <footer className="account-card__footer">
         <span className={account.stale ? 'stale' : ''}><Clock3 size={14} />{account.last_updated ? formatTime(account.last_updated) : '等待首次同步'}</span>
         <div className="control-group">
@@ -475,8 +477,9 @@ function HistoryModal({ account, onClose }: { account: AccountSummary; onClose: 
   const [history, setHistory] = useState<History | null>(null)
   const [range, setRange] = useState<'hourly' | 'daily'>('hourly')
   useEffect(() => { void api<History>(`/api/v1/accounts/${account.id}/history`).then(setHistory) }, [account.id])
-  const data = (history?.[range] || []).map((point) => ({ name: range === 'hourly' ? new Date(point.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : new Date(point.at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }), traffic: point.traffic }))
-  return <div className="modal-layer" role="dialog" aria-modal="true"><div className="modal-scrim" onClick={onClose} /><section className="chart-modal glass-card"><header><div><p className="eyebrow">TRAFFIC HISTORY</p><h2>{account.remark || account.account}</h2></div><IconButton label="关闭" onClick={onClose}><X /></IconButton></header><Segmented value={range} options={[['hourly', '24 小时'], ['daily', '30 天']]} onChange={(value) => setRange(value as typeof range)} /><div className="chart-area">{!history ? <LoaderCircle className="spin chart-loader" /> : data.length === 0 ? <div className="subtle-empty"><HistoryIcon />等待采样数据</div> : <ResponsiveContainer width="100%" height="100%">{range === 'hourly' ? <AreaChart data={data}><CartesianGrid stroke="#e5e5ea" vertical={false} /><XAxis dataKey="name" tickLine={false} axisLine={false} /><YAxis tickLine={false} axisLine={false} width={48} /><Tooltip contentStyle={{ borderRadius: 14, border: '1px solid #e5e5ea' }} /><Area type="monotone" dataKey="traffic" stroke="#1c1c1e" fill="#d1d1d6" strokeWidth={2} /></AreaChart> : <BarChart data={data}><CartesianGrid stroke="#e5e5ea" vertical={false} /><XAxis dataKey="name" tickLine={false} axisLine={false} /><YAxis tickLine={false} axisLine={false} width={48} /><Tooltip contentStyle={{ borderRadius: 14, border: '1px solid #e5e5ea' }} /><Bar dataKey="traffic" fill="#1c1c1e" radius={[5, 5, 0, 0]} /></BarChart>}</ResponsiveContainer>}</div></section></div>
+  const data = (history?.[range] || []).map((point) => ({ name: range === 'hourly' ? new Date(point.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : new Date(point.at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }), traffic: Math.round(point.traffic * 1000) / 1000 }))
+  const tooltip = { contentStyle: { borderRadius: 14, border: '1px solid #e5e5ea' }, formatter: (value: number | string) => [typeof value === 'number' ? value.toFixed(3) : value, '流量 (GB)'] as [string | number, string] }
+  return <div className="modal-layer" role="dialog" aria-modal="true"><div className="modal-scrim" onClick={onClose} /><section className="chart-modal glass-card"><header><div><p className="eyebrow">TRAFFIC HISTORY</p><h2>{account.remark || account.account}</h2></div><IconButton label="关闭" onClick={onClose}><X /></IconButton></header><Segmented value={range} options={[['hourly', '24 小时'], ['daily', '30 天']]} onChange={(value) => setRange(value as typeof range)} /><div className="chart-area">{!history ? <LoaderCircle className="spin chart-loader" /> : data.length === 0 ? <div className="subtle-empty"><HistoryIcon />等待采样数据</div> : <ResponsiveContainer width="100%" height="100%">{range === 'hourly' ? <AreaChart data={data}><CartesianGrid stroke="#e5e5ea" vertical={false} /><XAxis dataKey="name" tickLine={false} axisLine={false} /><YAxis tickLine={false} axisLine={false} /><Tooltip {...tooltip} /><Area type="monotone" dataKey="traffic" stroke="#1c1c1e" fill="#d1d1d6" strokeWidth={2} /></AreaChart> : <BarChart data={data}><CartesianGrid stroke="#e5e5ea" vertical={false} /><XAxis dataKey="name" tickLine={false} axisLine={false} /><YAxis tickLine={false} axisLine={false} /><Tooltip {...tooltip} /><Bar dataKey="traffic" fill="#1c1c1e" radius={[5, 5, 0, 0]} /></BarChart>}</ResponsiveContainer>}</div></section></div>
 }
 
 function BrandMark() { return <span className="brand-mark"><Cloud size={21} /></span> }
@@ -486,12 +489,13 @@ function SectionTitle({ icon, title, subtitle }: { icon: React.ReactNode; title:
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   const id = useId()
+  const isSelect = Children.toArray(children).some((child) => isValidElement(child) && child.type === 'select')
   const linked = Children.map(children, (child) => {
     if (!isValidElement(child) || !['input', 'select', 'textarea'].includes(String(child.type))) return child
     const element = child as ReactElement<{ id?: string }>
     return cloneElement(element, { id: element.props.id || id })
   })
-  return <div className="field"><label htmlFor={id}>{label}</label><div className="input-shell">{linked}</div></div>
+  return <div className="field"><label htmlFor={id}>{label}</label><div className={`input-shell ${isSelect ? 'input-shell--select' : ''}`}>{linked}</div></div>
 }
 function PasswordField({ label, value, visible, onVisible, onChange, autoComplete }: { label: string; value: string; visible: boolean; onVisible: () => void; onChange: (value: string) => void; autoComplete: string }) { return <Field label={label}><LockKeyhole size={17} /><input type={visible ? 'text' : 'password'} value={value} onChange={(event) => onChange(event.target.value)} autoComplete={autoComplete} /><button type="button" className="input-action" onClick={onVisible} aria-label={visible ? '隐藏密码' : '显示密码'}>{visible ? <EyeOff /> : <Eye />}</button></Field> }
 function Segmented({ value, options, onChange }: { value: string; options: readonly (readonly [string, string])[]; onChange: (value: string) => void }) { return <div className="segmented">{options.map(([key, label]) => <button type="button" className={value === key ? 'active' : ''} key={key} onClick={() => onChange(key)}>{label}</button>)}</div> }

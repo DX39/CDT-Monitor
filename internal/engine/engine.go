@@ -323,8 +323,19 @@ func (e *Engine) processAccount(ctx context.Context, accountID int64, force bool
 		}
 	}
 
-	if config.EnableBilling && (force || now.Hour()%6 == 0) {
-		_ = e.refreshBilling(ctx, account, secret, now)
+	if config.EnableBilling {
+		var balance aliyun.BillingBalance
+		balanceCached, _ := e.store.BillingCache(ctx, account.ID, "balance", "", 6*time.Hour, &balance)
+		billCached := true
+		if account.InstanceID != "" {
+			var bill aliyun.BillingBill
+			billCached, _ = e.store.BillingCache(ctx, account.ID, "instance_bill", now.Format("2006-01"), 6*time.Hour, &bill)
+		}
+		if force || now.Hour()%6 == 0 || !balanceCached || !billCached {
+			if billingErr := e.refreshBilling(ctx, account, secret, now); billingErr != nil {
+				_ = e.store.AddLog(ctx, "error", fmt.Sprintf("账单查询失败 [%s]: %v", masked(account.AccessKeyID), billingErr))
+			}
+		}
 	}
 	message := fmt.Sprintf("[%s] 流量 %.2fGB / %.2fGB (%.2f%%) · 状态 %s", masked(account.AccessKeyID), traffic, account.MaxTraffic, percentage, status)
 	if len(actions) > 0 {
@@ -405,11 +416,15 @@ func (e *Engine) accountLock(accountID int64) *sync.Mutex {
 
 func (e *Engine) refreshBilling(ctx context.Context, account domain.Account, secret string, now time.Time) error {
 	cycle := now.Format("2006-01")
+	setBillingError := func(err error) {
+		_ = e.store.SetBillingCache(ctx, account.ID, "error", "", map[string]string{"message": err.Error()})
+	}
 	var balance aliyun.BillingBalance
 	cached, _ := e.store.BillingCache(ctx, account.ID, "balance", "", 6*time.Hour, &balance)
 	if !cached {
 		value, err := e.provider.GetAccountBalance(ctx, account, secret)
 		if err != nil {
+			setBillingError(err)
 			return err
 		}
 		balance = value
@@ -421,11 +436,13 @@ func (e *Engine) refreshBilling(ctx context.Context, account domain.Account, sec
 		if !cached {
 			value, err := e.provider.GetInstanceBill(ctx, account, secret, cycle)
 			if err != nil {
+				setBillingError(err)
 				return err
 			}
 			_ = e.store.SetBillingCache(ctx, account.ID, "instance_bill", cycle, value)
 		}
 	}
+	_ = e.store.SetBillingCache(ctx, account.ID, "error", "", map[string]string{"message": ""})
 	return nil
 }
 
@@ -535,6 +552,12 @@ func (e *Engine) Summary(ctx context.Context) ([]domain.AccountSummary, time.Tim
 			Stale: account.UpdatedAt.IsZero() || time.Since(account.UpdatedAt) > time.Duration(max(config.APIInterval*2, 180))*time.Second,
 		}
 		if config.EnableBilling {
+			var billingError struct {
+				Message string `json:"message"`
+			}
+			if ok, _ := e.store.BillingCache(ctx, account.ID, "error", "", 7*24*time.Hour, &billingError); ok {
+				item.BillingError = strings.TrimSpace(billingError.Message)
+			}
 			var balance aliyun.BillingBalance
 			if ok, _ := e.store.BillingCache(ctx, account.ID, "balance", "", 7*24*time.Hour, &balance); ok {
 				item.Balance, item.Currency = &balance.Amount, balance.Currency

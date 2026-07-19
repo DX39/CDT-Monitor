@@ -47,7 +47,7 @@ test('login brand is positioned above the authentication card', async ({ page },
   await page.screenshot({ path: testInfo.outputPath('login-brand-desktop.png'), fullPage: true })
 })
 
-test('mobile settings, billing, API keys and selects remain usable', async ({ page }, testInfo) => {
+test('dashboard billing, history precision and settings remain usable', async ({ page }, testInfo) => {
   await page.route('**/api/v1/system/init-status', (route) => route.fulfill({ json: { initialized: true } }))
   await page.route('**/api/v1/status', (route) => route.fulfill({ json: {
     accounts: [{
@@ -64,18 +64,50 @@ test('mobile settings, billing, API keys and selects remain usable', async ({ pa
       instance_status: 'Running',
       last_updated: new Date().toISOString(),
       stale: false,
+      monthly_cost: 23.456,
+      balance: 123.45,
+      currency: 'CNY',
     }],
     system_last_run: new Date().toISOString(),
   } }))
   await page.route('**/api/v1/config', (route) => route.fulfill({ json: config }))
+  await page.route('**/api/v1/accounts/1/history', (route) => route.fulfill({ json: {
+    hourly: [{ at: new Date().toISOString(), traffic: 1.23456 }],
+    daily: [{ at: new Date().toISOString(), traffic: 9.87654 }],
+  } }))
   await page.route('**/api/v1/api-keys', (route) => route.fulfill({ json: {
     keys: [{ id: 1, name: '旧版 Key', scopes: null, created_at: new Date().toISOString() }],
   } }))
+  await page.route('**/api/v1/logs**', (route) => route.fulfill({ json: {
+    logs: [{ id: 1, type: 'audit', message: '这是一条用于验证移动端日志布局不会向右溢出的较长运行日志内容', created_at: new Date().toISOString() }],
+  } }))
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/')
+  const billing = page.locator('.account-billing')
+  await expect(billing.getByText('本月费用')).toBeVisible()
+  await expect(billing.getByText('¥23.46')).toBeVisible()
+  await expect(billing.getByText('¥123.45')).toBeVisible()
+  await expect(page.locator('.billing-row')).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('dashboard-billing-desktop.png'), fullPage: true })
+
+  await page.getByRole('button', { name: '查看历史流量' }).click()
+  await expect(page.locator('.chart-modal')).toBeVisible()
+  await page.locator('.chart-area').hover({ position: { x: 440, y: 180 } })
+  await expect(page.getByText('1.235')).toBeVisible()
+  await page.locator('.chart-modal').getByRole('button', { name: '关闭' }).click()
+
+  await page.getByRole('button', { name: '设置' }).click()
+  const refreshSelectDesktop = page.getByLabel('API 刷新间隔')
+  await expect(refreshSelectDesktop).toBeVisible()
+  const selectShell = refreshSelectDesktop.locator('..')
+  await expect(selectShell).toHaveClass(/input-shell--select/)
+  expect(await refreshSelectDesktop.evaluate((element) => getComputedStyle(element).appearance)).toBe('none')
+  expect(await selectShell.evaluate((element) => getComputedStyle(element, '::after').content)).not.toBe('none')
+  await page.screenshot({ path: testInfo.outputPath('settings-select-desktop.png'), fullPage: true })
+  await page.locator('.settings-panel').getByRole('button', { name: '关闭' }).click()
 
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/')
-  await expect(page.getByText('本月费用')).toBeVisible()
-  await expect(page.getByText('账单数据将在实例刷新后显示')).toBeVisible()
 
   await page.getByRole('button', { name: '菜单' }).click()
   await page.getByRole('button', { name: '设置' }).click()
@@ -89,10 +121,11 @@ test('mobile settings, billing, API keys and selects remain usable', async ({ pa
   expect(panelBox!.y + panelBox!.height).toBeLessThan(844)
   expect(await panel.evaluate((element) => getComputedStyle(element).borderRadius)).not.toBe('0px')
 
-  const refreshSelect = page.getByLabel('API 刷新间隔')
-  await expect(refreshSelect).toBeVisible()
-  expect(await refreshSelect.evaluate((element) => getComputedStyle(element).appearance)).toBe('none')
-  expect(await refreshSelect.locator('..').evaluate((element) => getComputedStyle(element).borderRadius)).not.toBe('0px')
+  await page.getByRole('button', { name: '日志' }).click()
+  await expect(page.getByRole('heading', { name: '运行日志' })).toBeVisible()
+  const contentOverflow = await page.locator('.settings-content').evaluate((element) => element.scrollWidth - element.clientWidth)
+  expect(contentOverflow).toBeLessThanOrEqual(1)
+  await page.screenshot({ path: testInfo.outputPath('settings-logs-mobile.png'), fullPage: true })
 
   await page.getByRole('button', { name: 'API Key' }).click()
   await expect(page.getByRole('heading', { name: 'API Key' })).toBeVisible()
