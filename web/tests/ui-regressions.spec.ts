@@ -78,9 +78,14 @@ test('dashboard billing, history precision and settings remain usable', async ({
   await page.route('**/api/v1/api-keys', (route) => route.fulfill({ json: {
     keys: [{ id: 1, name: '旧版 Key', scopes: null, created_at: new Date().toISOString() }],
   } }))
-  await page.route('**/api/v1/logs**', (route) => route.fulfill({ json: {
-    logs: [{ id: 1, type: 'audit', message: '这是一条用于验证移动端日志布局不会向右溢出的较长运行日志内容', created_at: new Date().toISOString() }],
-  } }))
+  let logsCleared = false
+  await page.route('**/api/v1/logs**', (route) => {
+    if (route.request().method() === 'DELETE') {
+      logsCleared = true
+      return route.fulfill({ json: { success: true } })
+    }
+    return route.fulfill({ json: { logs: logsCleared ? null : [{ id: 1, type: 'audit', message: '这是一条用于验证移动端日志布局不会向右溢出的较长运行日志内容', created_at: new Date().toISOString() }] } })
+  })
 
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/')
@@ -125,6 +130,9 @@ test('dashboard billing, history precision and settings remain usable', async ({
   await expect(page.getByRole('heading', { name: '运行日志' })).toBeVisible()
   const contentOverflow = await page.locator('.settings-content').evaluate((element) => element.scrollWidth - element.clientWidth)
   expect(contentOverflow).toBeLessThanOrEqual(1)
+  await page.getByRole('button', { name: '清空' }).click()
+  await expect(page.getByText('暂无日志')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '运行日志' })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('settings-logs-mobile.png'), fullPage: true })
 
   await page.getByRole('button', { name: 'API Key' }).click()

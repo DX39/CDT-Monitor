@@ -38,7 +38,7 @@ func (s *Store) ListLogs(ctx context.Context, tab string, limit int) ([]domain.L
 		return nil, err
 	}
 	defer rows.Close()
-	var entries []domain.LogEntry
+	entries := make([]domain.LogEntry, 0)
 	for rows.Next() {
 		var entry domain.LogEntry
 		var created int64

@@ -467,9 +467,17 @@ function APIKeySettings({ notify }: { notify: (message: string, tone?: Toast['to
 function LogSettings({ notify }: { notify: (message: string, tone?: Toast['tone']) => void }) {
   const [tab, setTab] = useState<'action' | 'heartbeat'>('action')
   const [logs, setLogs] = useState<LogEntry[]>([])
-  const load = useCallback(() => api<{ logs: LogEntry[] }>(`/api/v1/logs?tab=${tab}`).then((value) => setLogs(value.logs)), [tab])
+  const load = useCallback(async () => {
+    try {
+      const value = await api<{ logs?: LogEntry[] | null }>(`/api/v1/logs?tab=${tab}`)
+      setLogs(Array.isArray(value.logs) ? value.logs : [])
+    } catch (cause) {
+      setLogs([])
+      notify(cause instanceof Error ? cause.message : '日志加载失败', 'error')
+    }
+  }, [notify, tab])
   useEffect(() => { void load() }, [load])
-  const clear = async () => { await api(`/api/v1/logs?tab=${tab}`, { method: 'DELETE', body: '{}' }); await load(); notify('日志已清空', 'success') }
+  const clear = async () => { try { await api(`/api/v1/logs?tab=${tab}`, { method: 'DELETE', body: '{}' }); setLogs([]); await load(); notify('日志已清空', 'success') } catch (cause) { notify(cause instanceof Error ? cause.message : '日志清理失败', 'error') } }
   return <div className="settings-section"><div className="section-title-row"><SectionTitle icon={<FileClock />} title="运行日志" subtitle="EVENT STREAM" /><div className="log-actions"><Segmented value={tab} options={[['action', '动作'], ['heartbeat', '心跳']]} onChange={(value) => setTab(value as typeof tab)} /><IconButton label="清空" tone="danger" onClick={() => void clear()}><Trash2 /></IconButton></div></div><div className="log-list">{logs.length === 0 && <div className="subtle-empty"><FileClock />暂无日志</div>}{logs.map((log) => <div className="log-row" key={log.id}><i className={`log-dot log-dot--${log.type}`} /><div><p>{log.message}</p><span>{formatDate(log.created_at)} · {log.type.toUpperCase()}</span></div></div>)}</div></div>
 }
 

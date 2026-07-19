@@ -119,6 +119,29 @@ func TestListAPIKeysReturnsEmptyArrayWhenNoneExist(t *testing.T) {
 	}
 }
 
+func TestListLogsReturnsEmptyArrayAfterClear(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	ctx := context.Background()
+	if err = st.AddLog(ctx, "audit", "test log"); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.ClearLogs(ctx, "action"); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := st.ListLogs(ctx, "action", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries == nil || len(entries) != 0 {
+		t.Fatalf("expected a non-nil empty log list, got %#v", entries)
+	}
+}
+
 func TestActionEventCanBeReleasedAfterFailure(t *testing.T) {
 	st, err := Open(t.TempDir())
 	if err != nil {
