@@ -251,10 +251,19 @@ func (c *Client) callOnce(ctx context.Context, accessKeyID, secret, region, host
 	if resp.StatusCode >= 400 {
 		return nil, resp.StatusCode >= 500 || resp.StatusCode == 429, fmt.Errorf("aliyun %s http %d: %s", action, resp.StatusCode, compactMessage(result, body))
 	}
-	if code := stringValue(result["Code"]); code != "" && code != "OK" {
+	if code := stringValue(result["Code"]); code != "" && !isSuccessCode(code) {
 		return nil, strings.Contains(strings.ToLower(code), "throttl"), fmt.Errorf("aliyun %s %s: %s", action, code, stringValue(result["Message"]))
 	}
 	return result, false, nil
+}
+
+func isSuccessCode(code string) bool {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "ok", "200", "success":
+		return true
+	default:
+		return false
+	}
 }
 
 func compactMessage(result map[string]any, raw []byte) string {
