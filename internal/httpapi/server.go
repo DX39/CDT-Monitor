@@ -340,7 +340,17 @@ func (s *Server) beginPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "https_required", "Passkey 登录只能在 HTTPS 安全上下文中使用")
 		return
 	}
-	assertion, session, err := s.webAuthn(r).BeginDiscoverableLogin()
+	credentials, err := s.store.LoadPasskeyCredentials(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "passkey_failed", "Passkey 数据加载失败")
+		return
+	}
+	user := &adminWebAuthnUser{credentials: credentials}
+	if len(credentials) == 0 {
+		writeError(w, http.StatusNotFound, "passkey_not_configured", "尚未创建管理员 Passkey")
+		return
+	}
+	assertion, session, err := s.webAuthn(r).BeginLogin(user)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "passkey_failed", err.Error())
 		return
@@ -369,16 +379,13 @@ func (s *Server) completePasskeyLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "passkey_invalid", "Passkey 响应无效")
 		return
 	}
-	user, credential, err := s.webAuthn(r).ValidatePasskeyLogin(func(_ []byte, userHandle []byte) (webauthn.User, error) {
-		if string(userHandle) != adminWebAuthnID {
-			return nil, errors.New("unknown passkey user")
-		}
-		credentials, loadErr := s.store.LoadPasskeyCredentials(r.Context())
-		if loadErr != nil {
-			return nil, loadErr
-		}
-		return &adminWebAuthnUser{credentials: credentials}, nil
-	}, ceremony.session, parsed)
+	credentials, err := s.store.LoadPasskeyCredentials(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "passkey_failed", "Passkey 数据加载失败")
+		return
+	}
+	user := &adminWebAuthnUser{credentials: credentials}
+	credential, err := s.webAuthn(r).ValidateLogin(user, ceremony.session, parsed)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "passkey_invalid", "Passkey 验证失败")
 		return
@@ -387,7 +394,6 @@ func (s *Server) completePasskeyLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "passkey_failed", "Passkey 状态保存失败")
 		return
 	}
-	_ = user
 	token, err := s.store.CreateSession(r.Context(), clientIP(r), r.UserAgent(), 24*time.Hour)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "session_failed", err.Error())
