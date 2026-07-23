@@ -2,21 +2,23 @@ import { Children, cloneElement, isValidElement, useCallback, useEffect, useId, 
 import type { ReactElement } from 'react'
 import {
   Activity, AlertTriangle, ArrowLeft, ArrowRight, Bell, Check, ChevronRight, CircleDollarSign,
-  Clock3, Cloud, Copy, Database, Eye, EyeOff, FileClock, Gauge, History as HistoryIcon,
-  KeyRound, LoaderCircle, LockKeyhole, LogOut, Mail, Menu, Play, Plus, Power, RefreshCw,
-  Save, Server, Settings, ShieldCheck, Square, Trash2, Webhook, X, Zap,
+  Clock3, Cloud, Copy, Database, ExternalLink, Eye, EyeOff, FileClock, Fingerprint, Gauge,
+  Github, Globe2, History as HistoryIcon, Info, KeyRound, LoaderCircle, LockKeyhole, LogOut,
+  Mail, Menu, Play, Plus, Power, RefreshCw, Save, Server, Settings, ShieldCheck, Square,
+  Trash2, UserCog, Webhook, X, Zap,
 } from 'lucide-react'
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { APIError, api, waitForJob } from './api'
 import {
-  APIKeyRecord, Account, AccountSummary, Config, History, Job, LogEntry, StatusResponse,
-  defaultConfig, emptyAccount,
+  APIKeyRecord, Account, AccountSummary, Config, History, Job, LogEntry, PasskeyRecord,
+  StatusResponse, SystemInfo, defaultConfig, emptyAccount,
 } from './types'
 
 type Phase = 'loading' | 'setup' | 'login' | 'dashboard' | 'fatal'
 type Toast = { id: number; tone: 'success' | 'error' | 'info'; message: string }
+type PasskeyCeremony = { session_id: string; public_key: { publicKey: Record<string, unknown> } }
 
 const regions = [
   ['cn-hongkong', '中国香港'], ['cn-hangzhou', '华东 1（杭州）'], ['cn-shanghai', '华东 2（上海）'],
@@ -33,6 +35,7 @@ export default function App() {
   const [fatal, setFatal] = useState('')
   const [toasts, setToasts] = useState<Toast[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [adminOpen, setAdminOpen] = useState(false)
   const [historyAccount, setHistoryAccount] = useState<AccountSummary | null>(null)
 
   const notify = useCallback((message: string, tone: Toast['tone'] = 'info') => {
@@ -98,6 +101,7 @@ export default function App() {
         config={config!}
         onRefresh={refreshStatus}
         onSettings={() => setSettingsOpen(true)}
+        onAdmin={() => setAdminOpen(true)}
         onHistory={setHistoryAccount}
         notify={notify}
         onLogout={() => setPhase('login')}
@@ -110,6 +114,7 @@ export default function App() {
           notify={notify}
         />
       )}
+      {adminOpen && <AdminSettingsPanel onClose={() => setAdminOpen(false)} notify={notify} />}
       {historyAccount && <HistoryModal account={historyAccount} onClose={() => setHistoryAccount(null)} />}
       <ToastStack items={toasts} />
     </>
@@ -216,6 +221,7 @@ function Login({ onComplete }: { onComplete: () => Promise<void> }) {
   const [password, setPassword] = useState('')
   const [visible, setVisible] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [passkeyBusy, setPasskeyBusy] = useState(false)
   const [error, setError] = useState('')
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true); setError('')
@@ -224,6 +230,17 @@ function Login({ onComplete }: { onComplete: () => Promise<void> }) {
       await onComplete()
     } catch (cause) { setError(cause instanceof Error ? cause.message : '登录失败') }
     finally { setBusy(false) }
+  }
+  const loginWithPasskey = async () => {
+    setPasskeyBusy(true); setError('')
+    try {
+      const begin = await api<PasskeyCeremony>('/api/v1/auth/passkeys/begin', { method: 'POST', body: '{}' })
+      const credential = await navigator.credentials.get({ publicKey: decodeRequestOptions(begin.public_key.publicKey) })
+      if (!(credential instanceof PublicKeyCredential)) throw new Error('未选择 Passkey')
+      await api(`/api/v1/auth/passkeys/complete?session_id=${encodeURIComponent(begin.session_id)}`, { method: 'POST', body: JSON.stringify(serializeCredential(credential)) })
+      await onComplete()
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Passkey 登录失败') }
+    finally { setPasskeyBusy(false) }
   }
   return (
     <main className="login-shell">
@@ -235,14 +252,15 @@ function Login({ onComplete }: { onComplete: () => Promise<void> }) {
           <PasswordField label="管理员密码" value={password} visible={visible} onVisible={() => setVisible(!visible)} onChange={setPassword} autoComplete="current-password" />
           {error && <div className="inline-error"><AlertTriangle size={16} />{error}</div>}
           <button className="button button--primary button--full" disabled={busy || !password}>{busy ? <LoaderCircle className="spin" size={18} /> : <ArrowRight size={18} />}安全登录</button>
+          {passkeyAvailable() && <button type="button" className="button button--secondary button--full" disabled={passkeyBusy} onClick={() => void loginWithPasskey()}>{passkeyBusy ? <LoaderCircle className="spin" size={18} /> : <Fingerprint size={18} />}使用 Passkey 登录</button>}
         </form>
       </div>
     </main>
   )
 }
 
-function Dashboard({ status, config, onRefresh, onSettings, onHistory, notify, onLogout }: {
-  status: StatusResponse; config: Config; onRefresh: () => Promise<void>; onSettings: () => void; onHistory: (account: AccountSummary) => void; notify: (message: string, tone?: Toast['tone']) => void; onLogout: () => void
+function Dashboard({ status, config, onRefresh, onSettings, onAdmin, onHistory, notify, onLogout }: {
+  status: StatusResponse; config: Config; onRefresh: () => Promise<void>; onSettings: () => void; onAdmin: () => void; onHistory: (account: AccountSummary) => void; notify: (message: string, tone?: Toast['tone']) => void; onLogout: () => void
 }) {
   const [busy, setBusy] = useState<Record<number, string>>({})
   const [mobileMenu, setMobileMenu] = useState(false)
@@ -276,6 +294,7 @@ function Dashboard({ status, config, onRefresh, onSettings, onHistory, notify, o
           <div className={`heartbeat ${heartbeatAge > 180 ? 'heartbeat--warn' : ''}`}><i />{heartbeatAge > 180 ? '监控任务延迟' : '自动化运行中'}</div>
           <IconButton label="刷新" onClick={() => void onRefresh()}><RefreshCw size={18} /></IconButton>
           <IconButton label="设置" onClick={onSettings}><Settings size={18} /></IconButton>
+          <IconButton label="管理员" title="管理员设置" onClick={onAdmin}><UserCog size={18} /></IconButton>
           <IconButton label="退出" onClick={() => void logout()}><LogOut size={18} /></IconButton>
         </div>
         <IconButton label="菜单" className="mobile-menu" onClick={() => setMobileMenu(!mobileMenu)}>{mobileMenu ? <X /> : <Menu />}</IconButton>
@@ -331,7 +350,7 @@ function AccountCard({ account, busy, keepAlive, billingEnabled, onAction, onHis
 }
 
 function SettingsPanel({ initial, onClose, onSaved, notify }: { initial: Config; onClose: () => void; onSaved: (config: Config) => void; notify: (message: string, tone?: Toast['tone']) => void }) {
-  const [tab, setTab] = useState<'general' | 'accounts' | 'notify' | 'keys' | 'logs'>('general')
+  const [tab, setTab] = useState<'general' | 'accounts' | 'notify' | 'keys' | 'logs' | 'about'>('general')
   const [config, setConfig] = useState<Config>(() => structuredClone(initial))
   const [busy, setBusy] = useState(false)
   const save = async () => {
@@ -351,7 +370,7 @@ function SettingsPanel({ initial, onClose, onSaved, notify }: { initial: Config;
     finally { setBusy(false) }
   }
   const tabs = [
-    ['general', <Settings />, '系统'], ['accounts', <Server />, '实例'], ['notify', <Bell />, '通知'], ['keys', <KeyRound />, 'API Key'], ['logs', <FileClock />, '日志'],
+    ['general', <Settings />, '系统'], ['accounts', <Server />, '实例'], ['notify', <Bell />, '通知'], ['keys', <KeyRound />, 'API Key'], ['logs', <FileClock />, '日志'], ['about', <Info />, '关于'],
   ] as const
   return (
     <div className="modal-layer" role="dialog" aria-modal="true" aria-label="系统设置">
@@ -365,6 +384,7 @@ function SettingsPanel({ initial, onClose, onSaved, notify }: { initial: Config;
           {tab === 'notify' && <NotificationSettings config={config} onChange={setConfig} notify={notify} />}
           {tab === 'keys' && <APIKeySettings notify={notify} />}
           {tab === 'logs' && <LogSettings notify={notify} />}
+          {tab === 'about' && <AboutSettings notify={notify} />}
         </div>
         {(tab === 'general' || tab === 'accounts' || tab === 'notify') && <footer className="settings-footer"><button className="button button--primary" onClick={() => void save()} disabled={busy}>{busy ? <LoaderCircle className="spin" /> : <Save />}保存更改</button></footer>}
       </section>
@@ -422,12 +442,23 @@ function NotificationSettings({ config, onChange, notify }: { config: Config; on
   }
   const n = config.notifications
   return <div className="settings-section"><SectionTitle icon={<Bell />} title="通知通道" subtitle="DELIVERY CHANNELS" />
+    {channel === 'webhook' && <WebhookVariablePicker body={n.webhook.body} onBodyChange={(body) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, body } } })} />}
     <div className="channel-tabs"><button className={channel === 'email' ? 'active' : ''} onClick={() => setChannel('email')}><Mail />Email</button><button className={channel === 'telegram' ? 'active' : ''} onClick={() => setChannel('telegram')}><Zap />Telegram</button><button className={channel === 'webhook' ? 'active' : ''} onClick={() => setChannel('webhook')}><Webhook />Webhook</button></div>
     {channel === 'email' && <div className="form-grid settings-form"><ToggleRow title="启用 Email" icon={<Mail />} checked={n.email.enabled} onChange={(enabled) => onChange({ ...config, notifications: { ...n, email: { ...n.email, enabled } } })} /><Field label="接收邮箱"><input type="email" value={n.email.to} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, to: event.target.value } } })} /></Field><Field label="SMTP Host"><input value={n.email.host} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, host: event.target.value } } })} /></Field><Field label="端口"><input type="number" value={n.email.port} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, port: Number(event.target.value) } } })} /></Field><Field label="安全模式"><select value={n.email.security} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, security: event.target.value } } })}><option value="ssl">SSL</option><option value="tls">STARTTLS</option><option value="none">无</option></select></Field><Field label="用户名"><input value={n.email.username} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, username: event.target.value } } })} /></Field><Field label={`密码${n.email.password_configured ? ' · 已配置' : ''}`}><input type="password" value={n.email.password || ''} placeholder={n.email.password_configured ? '留空保持不变' : ''} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, password: event.target.value } } })} /></Field></div>}
     {channel === 'telegram' && <div className="form-grid settings-form"><ToggleRow title="启用 Telegram" icon={<Zap />} checked={n.telegram.enabled} onChange={(enabled) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, enabled } } })} /><Field label={`Bot Token${n.telegram.token_configured ? ' · 已配置' : ''}`}><input type="password" value={n.telegram.token || ''} placeholder={n.telegram.token_configured ? '留空保持不变' : ''} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, token: event.target.value } } })} /></Field><Field label="Chat ID"><input value={n.telegram.chat_id} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, chat_id: event.target.value } } })} /></Field><Field label="代理类型"><select value={n.telegram.proxy_type} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_type: event.target.value } } })}><option value="none">直连</option><option value="custom">自定义反代</option><option value="socks5">SOCKS5</option></select></Field>{n.telegram.proxy_type === 'custom' && <Field label="反代 URL"><input value={n.telegram.proxy_url} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_url: event.target.value } } })} /></Field>}{n.telegram.proxy_type === 'socks5' && <><Field label="代理 IP"><input value={n.telegram.proxy_ip} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_ip: event.target.value } } })} /></Field><Field label="代理端口"><input value={n.telegram.proxy_port} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_port: event.target.value } } })} /></Field><Field label="代理账号"><input value={n.telegram.proxy_user} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_user: event.target.value } } })} /></Field><Field label={`代理密码${n.telegram.proxy_password_configured ? ' · 已配置' : ''}`}><input type="password" value={n.telegram.proxy_pass || ''} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_pass: event.target.value } } })} /></Field></>}</div>}
     {channel === 'webhook' && <div className="form-grid settings-form"><ToggleRow title="启用 Webhook" icon={<Webhook />} checked={n.webhook.enabled} onChange={(enabled) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, enabled } } })} /><Field label="Webhook URL"><input value={n.webhook.url} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, url: event.target.value } } })} /></Field><Field label="请求方式"><select value={n.webhook.method} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, method: event.target.value } } })}><option>GET</option><option>POST</option></select></Field><Field label="请求类型"><select value={n.webhook.request_type} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, request_type: event.target.value } } })}><option>JSON</option><option>FORM</option></select></Field><Field label="自定义 Headers"><textarea value={n.webhook.headers || ''} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, headers: event.target.value } } })} placeholder='{"Authorization":"Bearer …"}' /></Field><Field label="Body 模板"><textarea value={n.webhook.body} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, body: event.target.value } } })} placeholder='{"title":"#TITLE#","message":"#MSG#"}' /></Field></div>}
     <button className="button button--secondary" disabled={testing} onClick={() => void test()}>{testing ? <LoaderCircle className="spin" /> : <Bell />}发送测试</button>
   </div>
+}
+
+function WebhookVariablePicker({ body, onBodyChange }: { body: string; onBodyChange: (body: string) => void }) {
+  const variables = [
+    ['#TITLE#', '标题'], ['#MSG#', '消息'], ['#ACCOUNT#', '账号 ID'], ['#TRAFFIC#', '流量 GB'],
+    ['#MAX_TRAFFIC#', '阈值 %'], ['#INSTANCE#', '实例 ID'], ['#STATUS#', '实例状态'], ['#TYPE#', '事件类型'],
+    ['#CREATED_AT#', 'UTC 时间'],
+  ]
+  const insert = (value: string) => onBodyChange(body + value)
+  return <div className="webhook-variables"><div className="webhook-variables__head"><span>可用变量</span><small>点击插入到 Body 末尾，也可直接写入 URL</small></div><div className="webhook-variables__list">{variables.map(([value, label]) => <button type="button" key={value} onClick={() => insert(value)} title={`插入 ${value}`}><code>{value}</code><span>{label}</span></button>)}</div></div>
 }
 
 function APIKeySettings({ notify }: { notify: (message: string, tone?: Toast['tone']) => void }) {
@@ -481,6 +512,68 @@ function LogSettings({ notify }: { notify: (message: string, tone?: Toast['tone'
   return <div className="settings-section"><div className="section-title-row"><SectionTitle icon={<FileClock />} title="运行日志" subtitle="EVENT STREAM" /><div className="log-actions"><Segmented value={tab} options={[['action', '动作'], ['heartbeat', '心跳']]} onChange={(value) => setTab(value as typeof tab)} /><IconButton label="清空" tone="danger" onClick={() => void clear()}><Trash2 /></IconButton></div></div><div className="log-list">{logs.length === 0 && <div className="subtle-empty"><FileClock />暂无日志</div>}{logs.map((log) => <div className="log-row" key={log.id}><i className={`log-dot log-dot--${log.type}`} /><div><p>{log.message}</p><span>{formatDate(log.created_at)} · {log.type.toUpperCase()}</span></div></div>)}</div></div>
 }
 
+function AdminSettingsPanel({ onClose, notify }: { onClose: () => void; notify: (message: string, tone?: Toast['tone']) => void }) {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordBusy, setPasswordBusy] = useState(false)
+  const [passkeys, setPasskeys] = useState<PasskeyRecord[]>([])
+  const [passkeyName, setPasskeyName] = useState('当前设备')
+  const [passkeyBusy, setPasskeyBusy] = useState(false)
+  const loadPasskeys = useCallback(async () => {
+    try {
+      const result = await api<{ passkeys?: PasskeyRecord[] }>('/api/v1/admin/passkeys')
+      setPasskeys(Array.isArray(result.passkeys) ? result.passkeys : [])
+    } catch (cause) { notify(cause instanceof Error ? cause.message : 'Passkey 列表加载失败', 'error') }
+  }, [notify])
+  useEffect(() => { void loadPasskeys() }, [loadPasskeys])
+  const updatePassword = async () => {
+    if (newPassword !== confirmPassword) { notify('两次新密码不一致', 'error'); return }
+    setPasswordBusy(true)
+    try {
+      await api('/api/v1/admin/password', { method: 'PUT', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) })
+      setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); notify('管理员密码已更新', 'success')
+    } catch (cause) { notify(cause instanceof Error ? cause.message : '密码更新失败', 'error') }
+    finally { setPasswordBusy(false) }
+  }
+  const createPasskey = async () => {
+    if (!passkeyAvailable()) { notify('请使用 HTTPS 打开控制台后再创建 Passkey', 'error'); return }
+    setPasskeyBusy(true)
+    try {
+      const begin = await api<PasskeyCeremony>('/api/v1/admin/passkeys/register/begin', { method: 'POST', body: JSON.stringify({ name: passkeyName }) })
+      const credential = await navigator.credentials.create({ publicKey: decodeCreationOptions(begin.public_key.publicKey) })
+      if (!(credential instanceof PublicKeyCredential)) throw new Error('未创建 Passkey')
+      await api(`/api/v1/admin/passkeys/register/complete?session_id=${encodeURIComponent(begin.session_id)}`, { method: 'POST', body: JSON.stringify(serializeCredential(credential)) })
+      await loadPasskeys(); notify('Passkey 创建成功', 'success')
+    } catch (cause) { notify(cause instanceof Error ? cause.message : 'Passkey 创建失败', 'error') }
+    finally { setPasskeyBusy(false) }
+  }
+  const removePasskey = async (id: number) => {
+    try { await api(`/api/v1/admin/passkeys/${id}`, { method: 'DELETE', body: '{}' }); await loadPasskeys(); notify('Passkey 已删除', 'success') }
+    catch (cause) { notify(cause instanceof Error ? cause.message : 'Passkey 删除失败', 'error') }
+  }
+  return <div className="modal-layer" role="dialog" aria-modal="true" aria-label="管理员设置"><div className="modal-scrim" onClick={onClose} /><section className="settings-panel admin-settings-panel">
+    <header><div><p className="eyebrow">ADMINISTRATION</p><h2>管理员设置</h2></div><IconButton label="关闭" onClick={onClose}><X /></IconButton></header>
+    <div className="settings-content"><div className="settings-section admin-settings-content">
+      <section className="admin-block"><SectionTitle icon={<LockKeyhole />} title="修改管理员密码" subtitle="PASSWORD ROTATION" /><div className="form-grid settings-form"><Field label="当前密码"><input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></Field><Field label="新密码"><input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></Field><Field label="确认新密码"><input type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></Field></div><button className="button button--primary" disabled={passwordBusy || !currentPassword || !newPassword || !confirmPassword} onClick={() => void updatePassword()}>{passwordBusy ? <LoaderCircle className="spin" /> : <Save />}保存新密码</button></section>
+      <section className="admin-block"><SectionTitle icon={<Fingerprint />} title="Passkey" subtitle="HTTPS DEVICE AUTHENTICATORS" /><p className="muted admin-note">Passkey 私钥只保存在设备或密码管理器中，服务端仅保存公钥。创建和登录必须使用 HTTPS。</p><div className="passkey-create"><Field label="设备名称"><input value={passkeyName} onChange={(event) => setPasskeyName(event.target.value)} placeholder="办公室电脑" /></Field><button className="button button--secondary" disabled={passkeyBusy || !passkeyAvailable()} onClick={() => void createPasskey()}>{passkeyBusy ? <LoaderCircle className="spin" /> : <Fingerprint />}创建 Passkey</button></div>{!passkeyAvailable() && <p className="inline-hint">当前连接不是 HTTPS，Passkey 创建按钮已禁用。</p>}<div className="passkey-list">{passkeys.length === 0 ? <div className="subtle-empty"><Fingerprint />尚未创建 Passkey</div> : passkeys.map((passkey) => <div className="passkey-row" key={passkey.id}><Fingerprint /><div><b>{passkey.name}</b><span>{passkey.last_used_at ? `最近使用 ${formatDate(passkey.last_used_at)}` : `创建于 ${formatDate(passkey.created_at)}`}</span></div><IconButton label="删除 Passkey" tone="danger" onClick={() => void removePasskey(passkey.id)}><Trash2 /></IconButton></div>)}</div></section>
+    </div></div>
+  </section></div>
+}
+
+function AboutSettings({ notify }: { notify: (message: string, tone?: Toast['tone']) => void }) {
+  const [info, setInfo] = useState<SystemInfo | null>(null)
+  const [checking, setChecking] = useState(false)
+  useEffect(() => { void api<SystemInfo>('/api/v1/system/info').then(setInfo).catch((cause) => notify(cause instanceof Error ? cause.message : '版本信息加载失败', 'error')) }, [notify])
+  const checkVersion = async () => {
+    setChecking(true)
+    try { const next = await api<SystemInfo>('/api/v1/system/info?check=1'); setInfo(next); notify(next.check_error || '版本检查完成', next.check_error ? 'error' : 'success') }
+    catch (cause) { notify(cause instanceof Error ? cause.message : '版本检查失败', 'error') }
+    finally { setChecking(false) }
+  }
+  return <div className="settings-section about-section"><SectionTitle icon={<Info />} title="关于 CDT Monitor" subtitle="PROJECT INFORMATION" /><div className="about-version"><div><span>当前版本</span><b>{info?.version || '加载中...'}</b><small>{info?.commit && info.commit !== 'unknown' ? `${info.commit} · ${info.built_at}` : '构建信息未知'}</small></div><button className="button button--secondary button--small" onClick={() => void checkVersion()} disabled={checking}>{checking ? <LoaderCircle className="spin" /> : <RefreshCw />}检查更新</button></div>{info?.latest_version && <p className="inline-hint">GitHub 最新版本：{info.latest_version}{info.latest_version === info.version ? '，当前已是最新版本' : '，请查看发布页获取更新'}</p>}<div className="about-links"><a href="https://github.com/wang4386/CDT-Monitor" target="_blank" rel="noreferrer"><Github /><span><b>GitHub 仓库</b><small>源代码、Issue 与 Release</small></span><ExternalLink /></a><a href="https://qninq.cn" target="_blank" rel="noreferrer"><Globe2 /><span><b>作者博客</b><small>qninq.cn</small></span><ExternalLink /></a><a href="https://www.nodeseek.com/" target="_blank" rel="noreferrer"><Globe2 /><span><b>NodeSeek</b><small>社区交流</small></span><ExternalLink /></a><a href="https://linux.do/" target="_blank" rel="noreferrer"><Globe2 /><span><b>Linux.do</b><small>技术社区交流</small></span><ExternalLink /></a></div></div>
+}
+
 function HistoryModal({ account, onClose }: { account: AccountSummary; onClose: () => void }) {
   const [history, setHistory] = useState<History | null>(null)
   const [range, setRange] = useState<'hourly' | 'daily'>('hourly')
@@ -508,10 +601,34 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function PasswordField({ label, value, visible, onVisible, onChange, autoComplete }: { label: string; value: string; visible: boolean; onVisible: () => void; onChange: (value: string) => void; autoComplete: string }) { return <Field label={label}><LockKeyhole size={17} /><input type={visible ? 'text' : 'password'} value={value} onChange={(event) => onChange(event.target.value)} autoComplete={autoComplete} /><button type="button" className="input-action" onClick={onVisible} aria-label={visible ? '隐藏密码' : '显示密码'}>{visible ? <EyeOff /> : <Eye />}</button></Field> }
 function Segmented({ value, options, onChange }: { value: string; options: readonly (readonly [string, string])[]; onChange: (value: string) => void }) { return <div className="segmented">{options.map(([key, label]) => <button type="button" className={value === key ? 'active' : ''} key={key} onClick={() => onChange(key)}>{label}</button>)}</div> }
 function ToggleRow({ title, icon, checked, onChange }: { title: string; icon: React.ReactNode; checked: boolean; onChange: (checked: boolean) => void }) { return <label className="toggle-row"><span>{icon}</span><b>{title}</b><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} /><i className="toggle"><em /></i></label> }
-function IconButton({ label, children, onClick, disabled, tone = 'default', className = '' }: { label: string; children: React.ReactNode; onClick: () => void; disabled?: boolean; tone?: string; className?: string }) { return <button className={`icon-button icon-button--${tone} ${className}`} aria-label={label} title={label} onClick={onClick} disabled={disabled}>{children}</button> }
+function IconButton({ label, title, children, onClick, disabled, tone = 'default', className = '' }: { label: string; title?: string; children: React.ReactNode; onClick: () => void; disabled?: boolean; tone?: string; className?: string }) { return <button className={`icon-button icon-button--${tone} ${className}`} aria-label={label} title={title || label} onClick={onClick} disabled={disabled}>{children}</button> }
 function ToastStack({ items }: { items: Toast[] }) { return <div className="toast-stack" aria-live="polite">{items.map((toast) => <div className={`toast toast--${toast.tone}`} key={toast.id}>{toast.tone === 'success' ? <Check /> : toast.tone === 'error' ? <AlertTriangle /> : <Activity />}{toast.message}</div>)}</div> }
 
 function statusClass(status: string) { if (status === 'Running') return 'positive'; if (status === 'Stopped') return 'negative'; if (status === 'Starting' || status === 'Stopping' || status === 'Pending') return 'warning'; return 'neutral' }
 function statusLabel(status: string) { return ({ Running: '运行中', Stopped: '已停止', Starting: '启动中', Stopping: '停止中', Pending: '等待中', Unknown: '未知' } as Record<string, string>)[status] || status }
 function formatTime(value: string) { return new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }
 function formatDate(value: string) { return new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
+function passkeyAvailable() { return location.protocol === 'https:' && window.isSecureContext && 'PublicKeyCredential' in window && 'credentials' in navigator }
+function decodeBase64(value: unknown) { if (typeof value !== 'string') return value; const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4)); return Uint8Array.from(binary, (character) => character.charCodeAt(0)).buffer }
+function decodeRequestOptions(options: Record<string, unknown>): PublicKeyCredentialRequestOptions {
+  const result: Record<string, unknown> = { ...options, challenge: decodeBase64(options.challenge) }
+  if (Array.isArray(options.allowCredentials)) result.allowCredentials = options.allowCredentials.map((item) => ({ ...(item as Record<string, unknown>), id: decodeBase64((item as Record<string, unknown>).id) }))
+  return result as unknown as PublicKeyCredentialRequestOptions
+}
+function decodeCreationOptions(options: Record<string, unknown>): PublicKeyCredentialCreationOptions {
+  const user = (options.user || {}) as Record<string, unknown>
+  const result: Record<string, unknown> = { ...options, challenge: decodeBase64(options.challenge), user: { ...user, id: decodeBase64(user.id) } }
+  if (Array.isArray(options.excludeCredentials)) result.excludeCredentials = options.excludeCredentials.map((item) => ({ ...(item as Record<string, unknown>), id: decodeBase64((item as Record<string, unknown>).id) }))
+  return result as unknown as PublicKeyCredentialCreationOptions
+}
+function base64url(value: ArrayBuffer) { const bytes = new Uint8Array(value); let binary = ''; bytes.forEach((byte) => { binary += String.fromCharCode(byte) }); return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '') }
+function serializeCredential(credential: PublicKeyCredential) {
+  const response = credential.response
+  const payload: Record<string, unknown> = { id: credential.id, rawId: base64url(credential.rawId), type: credential.type, clientExtensionResults: credential.getClientExtensionResults(), response: { clientDataJSON: base64url(response.clientDataJSON) } }
+  if (response instanceof AuthenticatorAttestationResponse) {
+    payload.response = { ...payload.response as Record<string, unknown>, attestationObject: base64url(response.attestationObject), transports: response.getTransports?.() }
+  } else if (response instanceof AuthenticatorAssertionResponse) {
+    payload.response = { ...payload.response as Record<string, unknown>, authenticatorData: base64url(response.authenticatorData), signature: base64url(response.signature), userHandle: response.userHandle ? base64url(response.userHandle) : null }
+  }
+  return payload
+}

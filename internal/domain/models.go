@@ -133,6 +133,13 @@ type APIKey struct {
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }
 
+type Passkey struct {
+	ID         int64      `json:"id"`
+	Name       string     `json:"name"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}
+
 type LogEntry struct {
 	ID        int64     `json:"id"`
 	Type      string    `json:"type"`

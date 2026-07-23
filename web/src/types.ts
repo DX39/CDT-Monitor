@@ -56,6 +56,8 @@ export type Job = { id: string; status: 'queued' | 'running' | 'completed' | 'fa
 export type History = { hourly: { at: string; traffic: number }[]; daily: { at: string; traffic: number }[] }
 export type LogEntry = { id: number; type: string; message: string; created_at: string }
 export type APIKeyRecord = { id: number; name: string; scopes: string[]; created_at: string; last_used_at?: string; expires_at?: string; revoked_at?: string }
+export type PasskeyRecord = { id: number; name: string; created_at: string; last_used_at?: string }
+export type SystemInfo = { version: string; commit: string; built_at: string; repository: string; release_url: string; latest_version?: string; check_error?: string }
 
 export const emptyAccount = (): Account => ({
   id: 0,

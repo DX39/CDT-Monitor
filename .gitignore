@@ -23,3 +23,8 @@ web/test-results
 web/playwright-report
 .tmp-*
 *.tsbuildinfo
+android-widget/.gradle/
+android-widget/local.properties
+android-widget/**/build/
+*.jks
+*.keystore

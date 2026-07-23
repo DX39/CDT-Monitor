@@ -184,6 +184,16 @@ GET /monitor.php?key=<具有 cron:run scope 的 API Key>
 
 不再支持把管理员密码放在 URL 中。
 
+### Android 桌面小组件
+
+仓库中的 [`android-widget`](android-widget/README.md) 是 `/api/v1/widget/summary` 的原生 Android 客户端。安装后可配置站点地址和具有 `widget:read` scope 的 API Key；从系统小组件选择器添加时，再选择具体实例。配置签名密钥后，可手动运行 GitHub Actions 构建通用 APK、常见 ABI 分包和 AAB。
+
+## 相关链接
+
+- 项目主页：[GitHub](https://github.com/wang4386/CDT-Monitor)
+- 作者博客：[qninq.cn](https://qninq.cn)
+- 技术社区：[NodeSeek](https://www.nodeseek.com/) · [Linux.do](https://linux.do/)
+
 ## 本地开发
 
 要求 Go 1.24 和 Node.js 22：
@@ -214,6 +224,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o cdt-monitor ./cmd/cdt-monit
 | `Automatic Release` | `main` push 或手动 | 自动计算 patch 版本并创建 tag |
 | `Release Binaries` | `v*.*.*` tag | Linux/Windows/macOS 的 amd64/arm64 压缩包和 GitHub Release |
 | `Container Image` | `dev`/`main`/tag | GHCR 的 linux/amd64 + linux/arm64 manifest |
+| `Android Widget` | 仅手动触发 | 通用/常见 ABI APK 与 AAB artifact |
 
 镜像标签：
 

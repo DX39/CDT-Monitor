@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/wang4386/CDT-Monitor/internal/domain"
 	"github.com/wang4386/CDT-Monitor/internal/security"
 )
@@ -141,4 +142,90 @@ func (s *Store) ValidateAPIKey(ctx context.Context, token string) ([]string, err
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *Store) UpdateAdminPassword(ctx context.Context, password, keepSessionToken string) error {
+	hash, err := security.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	return s.WithTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE settings SET value=? WHERE key='admin_password'`, hash); err != nil {
+			return err
+		}
+		if keepSessionToken != "" {
+			_, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash != ?`, security.TokenHash(keepSessionToken))
+		} else {
+			_, err = tx.ExecContext(ctx, `DELETE FROM sessions`)
+		}
+		return err
+	})
+}
+
+func (s *Store) ListPasskeys(ctx context.Context) ([]domain.Passkey, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,created_at,last_used_at FROM passkeys ORDER BY id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]domain.Passkey, 0)
+	for rows.Next() {
+		var item domain.Passkey
+		var created int64
+		var lastUsed sql.NullInt64
+		if err = rows.Scan(&item.ID, &item.Name, &created, &lastUsed); err != nil {
+			return nil, err
+		}
+		item.CreatedAt = time.Unix(created, 0).UTC()
+		item.LastUsedAt = nullTime(lastUsed)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) LoadPasskeyCredentials(ctx context.Context) ([]webauthn.Credential, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT credential_json FROM passkeys ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	credentials := make([]webauthn.Credential, 0)
+	for rows.Next() {
+		var encoded string
+		if err = rows.Scan(&encoded); err != nil {
+			return nil, err
+		}
+		var credential webauthn.Credential
+		if err = json.Unmarshal([]byte(encoded), &credential); err != nil {
+			return nil, err
+		}
+		credentials = append(credentials, credential)
+	}
+	return credentials, rows.Err()
+}
+
+func (s *Store) SavePasskey(ctx context.Context, name string, credential webauthn.Credential) error {
+	if strings.TrimSpace(name) == "" {
+		name = "管理员 Passkey"
+	}
+	encoded, err := json.Marshal(credential)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO passkeys(name,credential_id,credential_json,created_at) VALUES(?,?,?,unixepoch())`, name, credential.ID, string(encoded))
+	return err
+}
+
+func (s *Store) UpdatePasskeyCredential(ctx context.Context, credential webauthn.Credential) error {
+	encoded, err := json.Marshal(credential)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE passkeys SET credential_json=?,last_used_at=unixepoch() WHERE credential_id=?`, string(encoded), credential.ID)
+	return err
+}
+
+func (s *Store) DeletePasskey(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM passkeys WHERE id=?`, id)
+	return err
 }

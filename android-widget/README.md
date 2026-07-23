@@ -1,0 +1,47 @@
+# CDT Monitor Android 小组件
+
+这是 CDT Monitor `dev` 分支对应的原生 Android 小组件应用。它只调用已经提供的只读接口：
+
+```text
+GET /api/v1/widget/summary
+Authorization: Bearer <API Key>
+```
+
+## 使用方式
+
+1. 在 CDT Monitor Web 控制台的“设置 → API Key”创建一个只包含 `widget:read` 的 Key。Key 只显示一次。
+2. 安装应用并打开“CDT Monitor 小组件”，填写站点地址和 Key，点击“保存并测试连接”。
+3. 在 Android 桌面添加“CDT Monitor 实例”小组件。
+4. 在配置页选择要显示的实例，点击“添加小组件”。
+
+应用会按 Android 小组件的系统刷新周期更新状态，并设置一个不早于 30 分钟的非精确定时刷新。点击小组件可打开连接设置。小组件只保存选中的实例 ID；站点地址明文保存，API Key 使用 Android Keystore 加密后保存。
+
+站点地址可以是 `http://` 或 `https://`，但公网部署必须使用 HTTPS，避免 API Key 在网络中暴露。
+
+## 本地构建
+
+需要 JDK 17、Android SDK 35 和 Gradle 8.10.2：
+
+```bash
+cd android-widget
+gradle assembleRelease bundleRelease
+```
+
+产物位于 `app/build/outputs/`：
+
+- `apk/debug/*universal*.apk`：可直接安装的通用 debug APK。
+- `apk/release/*universal*.apk`、`*arm64-v8a*.apk`、`*armeabi-v7a*.apk`、`*x86*.apk`：通用与常见 ABI 分包（未签名时文件名会带 `-unsigned`）。
+- `bundle/release/app-release.aab`：Google Play 或其他支持 AAB 的发行渠道使用。
+
+## GitHub Actions
+
+`.github/workflows/android-widget.yml` 在 `dev`/`main` 分支中 Android 工程有改动时运行，也可以手动触发。它会在 Ubuntu runner 上安装 SDK 35，构建可直接安装的 debug APK、release APK、四种 ABI 分包以及 AAB，并将它们作为 workflow artifact 上传。构建不依赖 API Key，也不会把任何站点凭据写入仓库。
+
+未配置签名密钥时，debug APK 使用 Android 调试签名，可以直接安装；release APK/AAB 是未签名发行产物。正式分发和后续覆盖升级需要在仓库 Actions Secrets 中配置：
+
+- `ANDROID_KEYSTORE_BASE64`：JKS/PKCS12 文件的 Base64 内容。
+- `ANDROID_KEYSTORE_PASSWORD`：keystore 密码。
+- `ANDROID_KEY_ALIAS`：签名 Key 的 alias。
+- `ANDROID_KEY_PASSWORD`：签名 Key 密码。
+
+配置后，Actions 会使用同一份 keystore 签署 release APK 和 AAB。不要把 keystore 或密码提交到仓库。

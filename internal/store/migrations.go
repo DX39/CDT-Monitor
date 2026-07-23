@@ -86,6 +86,14 @@ CREATE TABLE IF NOT EXISTS api_keys (
     expires_at INTEGER,
     revoked_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS passkeys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    credential_id BLOB NOT NULL UNIQUE,
+    credential_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,

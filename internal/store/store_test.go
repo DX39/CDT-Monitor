@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/wang4386/CDT-Monitor/internal/domain"
 	"github.com/wang4386/CDT-Monitor/internal/security"
 	_ "modernc.org/sqlite"
@@ -202,6 +203,76 @@ func TestSessionExpiry(t *testing.T) {
 	valid, err := st.ValidateSession(context.Background(), token)
 	if err != nil || valid {
 		t.Fatal("expired session must not validate")
+	}
+}
+
+func TestUpdateAdminPasswordKeepsCurrentSessionOnly(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if err = st.Setup(ctx, domain.Config{AdminPassword: "Original-Password-42!", TrafficThreshold: 95, ShutdownMode: "KeepCharging", ThresholdAction: "stop_and_notify", APIInterval: 600, Timezone: "Asia/Shanghai"}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := st.CreateSession(ctx, "127.0.0.1", "current", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := st.CreateSession(ctx, "127.0.0.2", "other", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.UpdateAdminPassword(ctx, "Replacement-Password-84!", current); err != nil {
+		t.Fatal(err)
+	}
+	if valid, _ := st.VerifyAdminPassword(ctx, "Original-Password-42!"); valid {
+		t.Fatal("old password must no longer validate")
+	}
+	if valid, _ := st.VerifyAdminPassword(ctx, "Replacement-Password-84!"); !valid {
+		t.Fatal("new password must validate")
+	}
+	if valid, _ := st.ValidateSession(ctx, current); !valid {
+		t.Fatal("current session must remain valid")
+	}
+	if valid, _ := st.ValidateSession(ctx, other); valid {
+		t.Fatal("other sessions must be invalidated")
+	}
+}
+
+func TestPasskeyCredentialRoundTrip(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	credential := webauthn.Credential{ID: []byte("credential-id"), PublicKey: []byte("public-key")}
+	if err = st.SavePasskey(ctx, "workstation", credential); err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := st.LoadPasskeyCredentials(ctx)
+	if err != nil || len(credentials) != 1 || string(credentials[0].ID) != "credential-id" {
+		t.Fatalf("credentials=%#v err=%v", credentials, err)
+	}
+	items, err := st.ListPasskeys(ctx)
+	if err != nil || len(items) != 1 || items[0].Name != "workstation" {
+		t.Fatalf("passkeys=%#v err=%v", items, err)
+	}
+	if err = st.UpdatePasskeyCredential(ctx, credential); err != nil {
+		t.Fatal(err)
+	}
+	items, err = st.ListPasskeys(ctx)
+	if err != nil || items[0].LastUsedAt == nil {
+		t.Fatal("passkey last-used timestamp was not updated")
+	}
+	if err = st.DeletePasskey(ctx, items[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	items, err = st.ListPasskeys(ctx)
+	if err != nil || items == nil || len(items) != 0 {
+		t.Fatalf("expected non-nil empty passkey list, got %#v", items)
 	}
 }
 

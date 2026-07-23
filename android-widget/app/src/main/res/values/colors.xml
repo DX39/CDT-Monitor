@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="cdt_ink">#17212B</color>
+    <color name="cdt_muted">#667482</color>
+    <color name="cdt_blue">#2E6BFF</color>
+    <color name="cdt_green">#188A55</color>
+    <color name="cdt_orange">#B56600</color>
+    <color name="cdt_red">#B42318</color>
+    <color name="cdt_surface">#F8FAFC</color>
+    <color name="cdt_border">#D9E1EA</color>
+</resources>

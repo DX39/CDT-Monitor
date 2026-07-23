@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CDT Monitor 小组件</string>
+    <string name="widget_description">查看 CDT 实例状态和流量用量</string>
+</resources>

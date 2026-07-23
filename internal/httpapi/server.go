@@ -13,13 +13,17 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/wang4386/CDT-Monitor/internal/domain"
 	"github.com/wang4386/CDT-Monitor/internal/engine"
+	"github.com/wang4386/CDT-Monitor/internal/security"
 	"github.com/wang4386/CDT-Monitor/internal/store"
 )
 
@@ -34,29 +38,58 @@ type contextKey string
 const principalKey contextKey = "principal"
 
 type Server struct {
-	store   *store.Store
-	engine  *engine.Engine
-	logger  *slog.Logger
-	assets  fs.FS
-	handler http.Handler
-	mu      sync.Mutex
-	limits  map[string]*rateWindow
+	store    *store.Store
+	engine   *engine.Engine
+	logger   *slog.Logger
+	assets   fs.FS
+	handler  http.Handler
+	mu       sync.Mutex
+	limits   map[string]*rateWindow
+	passkeys map[string]passkeySession
+	build    BuildInfo
 }
+
+type BuildInfo struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+	BuiltAt string `json:"built_at"`
+}
+
+type passkeySession struct {
+	kind    string
+	name    string
+	session webauthn.SessionData
+	expires time.Time
+}
+
+const adminWebAuthnID = "cdt-monitor-admin-v1"
 
 type rateWindow struct {
 	start time.Time
 	count int
 }
 
-func New(st *store.Store, eng *engine.Engine, assets fs.FS, logger *slog.Logger) *Server {
-	s := &Server{store: st, engine: eng, assets: assets, logger: logger, limits: make(map[string]*rateWindow)}
+func New(st *store.Store, eng *engine.Engine, assets fs.FS, logger *slog.Logger, build ...BuildInfo) *Server {
+	info := BuildInfo{Version: "dev", Commit: "unknown", BuiltAt: "unknown"}
+	if len(build) > 0 {
+		info = build[0]
+	}
+	s := &Server{store: st, engine: eng, assets: assets, logger: logger, limits: make(map[string]*rateWindow), passkeys: make(map[string]passkeySession), build: info}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /readyz", s.ready)
 	mux.HandleFunc("GET /api/v1/system/init-status", s.initStatus)
+	mux.Handle("GET /api/v1/system/info", s.require("admin", http.HandlerFunc(s.systemInfo)))
 	mux.HandleFunc("POST /api/v1/setup", s.setup)
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
+	mux.HandleFunc("POST /api/v1/auth/passkeys/begin", s.beginPasskeyLogin)
+	mux.HandleFunc("POST /api/v1/auth/passkeys/complete", s.completePasskeyLogin)
 	mux.Handle("POST /api/v1/auth/logout", s.require("admin", http.HandlerFunc(s.logout)))
+	mux.Handle("PUT /api/v1/admin/password", s.require("admin", http.HandlerFunc(s.updateAdminPassword)))
+	mux.Handle("GET /api/v1/admin/passkeys", s.require("admin", http.HandlerFunc(s.listPasskeys)))
+	mux.Handle("DELETE /api/v1/admin/passkeys/{id}", s.require("admin", http.HandlerFunc(s.deletePasskey)))
+	mux.Handle("POST /api/v1/admin/passkeys/register/begin", s.require("admin", http.HandlerFunc(s.beginPasskeyRegistration)))
+	mux.Handle("POST /api/v1/admin/passkeys/register/complete", s.require("admin", http.HandlerFunc(s.completePasskeyRegistration)))
 	mux.Handle("GET /api/v1/status", s.require("widget:read", http.HandlerFunc(s.status)))
 	mux.Handle("GET /api/v1/widget/summary", s.require("widget:read", http.HandlerFunc(s.widgetSummary)))
 	mux.Handle("GET /api/v1/config", s.require("admin", http.HandlerFunc(s.getConfig)))
@@ -98,6 +131,25 @@ func (s *Server) initStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"initialized": initialized})
+}
+
+func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
+	response := map[string]any{
+		"version":     s.build.Version,
+		"commit":      s.build.Commit,
+		"built_at":    s.build.BuiltAt,
+		"repository":  "https://github.com/wang4386/CDT-Monitor",
+		"release_url": "https://github.com/wang4386/CDT-Monitor/releases",
+	}
+	if r.URL.Query().Get("check") == "1" {
+		latest, err := latestRelease(r.Context(), s.build.Version)
+		if err != nil {
+			response["check_error"] = "暂时无法检查 GitHub Release"
+		} else {
+			response["latest_version"] = latest
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +217,279 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	setAuthCookies(w, r, token, csrf)
 	_ = s.store.AddLog(r.Context(), "audit", "管理员登录成功 [IP: "+ip+"]")
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "csrf_token": csrf})
+}
+
+func (s *Server) updateAdminPassword(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	valid, err := s.store.VerifyAdminPassword(r.Context(), request.CurrentPassword)
+	if err != nil || !valid {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "当前密码错误")
+		return
+	}
+	if len(request.NewPassword) < 10 {
+		writeError(w, http.StatusBadRequest, "invalid_password", "新密码至少需要 10 个字符")
+		return
+	}
+	currentToken := ""
+	if cookie, cookieErr := r.Cookie("cdt_session"); cookieErr == nil {
+		currentToken = cookie.Value
+	}
+	if err := s.store.UpdateAdminPassword(r.Context(), request.NewPassword, currentToken); err != nil {
+		writeError(w, http.StatusInternalServerError, "password_update_failed", "管理员密码更新失败")
+		return
+	}
+	_ = s.store.AddLog(r.Context(), "audit", "管理员密码已更新")
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+func (s *Server) listPasskeys(w http.ResponseWriter, r *http.Request) {
+	items, err := s.store.ListPasskeys(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "passkeys_failed", "Passkey 列表加载失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"passkeys": items})
+}
+
+func (s *Server) deletePasskey(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.store.DeletePasskey(r.Context(), id); err != nil {
+		writeError(w, http.StatusInternalServerError, "passkey_failed", "Passkey 删除失败")
+		return
+	}
+	_ = s.store.AddLog(r.Context(), "audit", "删除管理员 Passkey")
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+func (s *Server) beginPasskeyRegistration(w http.ResponseWriter, r *http.Request) {
+	if !requestSecure(r) {
+		writeError(w, http.StatusBadRequest, "https_required", "Passkey 只能在 HTTPS 安全上下文中创建")
+		return
+	}
+	var request struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	credentials, err := s.store.LoadPasskeyCredentials(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "passkey_failed", "Passkey 数据加载失败")
+		return
+	}
+	creation, session, err := s.webAuthn(r).BeginRegistration(&adminWebAuthnUser{credentials: credentials})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "passkey_failed", err.Error())
+		return
+	}
+	id, err := security.NewToken(24)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "passkey_failed", "无法创建 Passkey 挑战")
+		return
+	}
+	s.savePasskeySession(id, passkeySession{kind: "registration", name: strings.TrimSpace(request.Name), session: *session, expires: time.Now().Add(5 * time.Minute)})
+	writeJSON(w, http.StatusOK, map[string]any{"session_id": id, "public_key": creation})
+}
+
+func (s *Server) completePasskeyRegistration(w http.ResponseWriter, r *http.Request) {
+	if !requestSecure(r) {
+		writeError(w, http.StatusBadRequest, "https_required", "Passkey 只能在 HTTPS 安全上下文中创建")
+		return
+	}
+	ceremony, ok := s.takePasskeySession(r.URL.Query().Get("session_id"), "registration")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "passkey_session_expired", "Passkey 挑战已过期，请重新开始")
+		return
+	}
+	credentials, err := s.store.LoadPasskeyCredentials(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "passkey_failed", "Passkey 数据加载失败")
+		return
+	}
+	parsed, err := protocol.ParseCredentialCreationResponse(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "passkey_invalid", "Passkey 响应无效")
+		return
+	}
+	credential, err := s.webAuthn(r).CreateCredential(&adminWebAuthnUser{credentials: credentials}, ceremony.session, parsed)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "passkey_invalid", "Passkey 验证失败")
+		return
+	}
+	if err = s.store.SavePasskey(r.Context(), ceremony.name, *credential); err != nil {
+		writeError(w, http.StatusInternalServerError, "passkey_failed", "Passkey 保存失败")
+		return
+	}
+	_ = s.store.AddLog(r.Context(), "audit", "创建管理员 Passkey")
+	writeJSON(w, http.StatusCreated, map[string]any{"success": true})
+}
+
+func (s *Server) beginPasskeyLogin(w http.ResponseWriter, r *http.Request) {
+	if !requestSecure(r) {
+		writeError(w, http.StatusBadRequest, "https_required", "Passkey 登录只能在 HTTPS 安全上下文中使用")
+		return
+	}
+	assertion, session, err := s.webAuthn(r).BeginDiscoverableLogin()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "passkey_failed", err.Error())
+		return
+	}
+	id, err := security.NewToken(24)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "passkey_failed", "无法创建 Passkey 挑战")
+		return
+	}
+	s.savePasskeySession(id, passkeySession{kind: "login", session: *session, expires: time.Now().Add(5 * time.Minute)})
+	writeJSON(w, http.StatusOK, map[string]any{"session_id": id, "public_key": assertion})
+}
+
+func (s *Server) completePasskeyLogin(w http.ResponseWriter, r *http.Request) {
+	if !requestSecure(r) {
+		writeError(w, http.StatusBadRequest, "https_required", "Passkey 登录只能在 HTTPS 安全上下文中使用")
+		return
+	}
+	ceremony, ok := s.takePasskeySession(r.URL.Query().Get("session_id"), "login")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "passkey_session_expired", "Passkey 挑战已过期，请重新开始")
+		return
+	}
+	parsed, err := protocol.ParseCredentialRequestResponse(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "passkey_invalid", "Passkey 响应无效")
+		return
+	}
+	user, credential, err := s.webAuthn(r).ValidatePasskeyLogin(func(_ []byte, userHandle []byte) (webauthn.User, error) {
+		if string(userHandle) != adminWebAuthnID {
+			return nil, errors.New("unknown passkey user")
+		}
+		credentials, loadErr := s.store.LoadPasskeyCredentials(r.Context())
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		return &adminWebAuthnUser{credentials: credentials}, nil
+	}, ceremony.session, parsed)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "passkey_invalid", "Passkey 验证失败")
+		return
+	}
+	if err = s.store.UpdatePasskeyCredential(r.Context(), *credential); err != nil {
+		writeError(w, http.StatusInternalServerError, "passkey_failed", "Passkey 状态保存失败")
+		return
+	}
+	_ = user
+	token, err := s.store.CreateSession(r.Context(), clientIP(r), r.UserAgent(), 24*time.Hour)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "session_failed", err.Error())
+		return
+	}
+	csrf := newCSRFToken()
+	setAuthCookies(w, r, token, csrf)
+	_ = s.store.AddLog(r.Context(), "audit", "管理员使用 Passkey 登录成功 [IP: "+clientIP(r)+"]")
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "csrf_token": csrf})
+}
+
+type adminWebAuthnUser struct {
+	credentials []webauthn.Credential
+}
+
+func (u *adminWebAuthnUser) WebAuthnID() []byte                         { return []byte(adminWebAuthnID) }
+func (u *adminWebAuthnUser) WebAuthnName() string                       { return "admin" }
+func (u *adminWebAuthnUser) WebAuthnDisplayName() string                { return "CDT Monitor 管理员" }
+func (u *adminWebAuthnUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
+
+func (s *Server) webAuthn(r *http.Request) *webauthn.WebAuthn {
+	origin := requestOrigin(r)
+	parsed, err := url.Parse(origin)
+	host := r.Host
+	if err == nil && parsed.Hostname() != "" {
+		host = parsed.Hostname()
+	}
+	return &webauthn.WebAuthn{Config: &webauthn.Config{
+		RPID:          host,
+		RPDisplayName: "CDT Monitor",
+		RPOrigins:     []string{origin},
+	}}
+}
+
+func requestOrigin(r *http.Request) string {
+	scheme := "http"
+	if requestSecure(r) {
+		scheme = "https"
+	}
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	if strings.Contains(host, ",") {
+		host = strings.TrimSpace(strings.Split(host, ",")[0])
+	}
+	return scheme + "://" + host
+}
+
+func (s *Server) savePasskeySession(id string, session passkeySession) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for key, item := range s.passkeys {
+		if item.expires.Before(now) {
+			delete(s.passkeys, key)
+		}
+	}
+	s.passkeys[id] = session
+}
+
+func (s *Server) takePasskeySession(id, kind string) (passkeySession, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.passkeys[id]
+	if !ok || session.kind != kind || session.expires.Before(time.Now()) {
+		delete(s.passkeys, id)
+		return passkeySession{}, false
+	}
+	delete(s.passkeys, id)
+	return session, true
+}
+
+func latestRelease(ctx context.Context, version string) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/wang4386/CDT-Monitor/releases/latest", nil)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	if version == "" {
+		version = "dev"
+	}
+	request.Header.Set("User-Agent", "CDT-Monitor/"+version)
+	client := &http.Client{Timeout: 4 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= 400 {
+		return "", fmt.Errorf("github HTTP %d", response.StatusCode)
+	}
+	var payload struct {
+		TagName string `json:"tag_name"`
+	}
+	if err = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload); err != nil {
+		return "", err
+	}
+	if payload.TagName == "" {
+		return "", errors.New("latest release has no tag")
+	}
+	return payload.TagName, nil
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {

@@ -97,7 +97,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	api := httpapi.New(st, eng, web.FS(), logger)
+	api := httpapi.New(st, eng, web.FS(), logger, httpapi.BuildInfo{Version: version, Commit: commit, BuiltAt: builtAt})
 	server := &http.Server{
 		Addr: *listen, Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,

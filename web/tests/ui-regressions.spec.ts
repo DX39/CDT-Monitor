@@ -78,6 +78,8 @@ test('dashboard billing, history precision and settings remain usable', async ({
   await page.route('**/api/v1/api-keys', (route) => route.fulfill({ json: {
     keys: [{ id: 1, name: '旧版 Key', scopes: null, created_at: new Date().toISOString() }],
   } }))
+  await page.route('**/api/v1/system/info**', (route) => route.fulfill({ json: { version: '2.0.0-dev', commit: 'test', built_at: new Date().toISOString(), repository: 'https://github.com/wang4386/CDT-Monitor', release_url: 'https://github.com/wang4386/CDT-Monitor/releases', latest_version: '2.0.0-dev' } }))
+  await page.route('**/api/v1/admin/passkeys', (route) => route.fulfill({ json: { passkeys: [] } }))
   let logsCleared = false
   await page.route('**/api/v1/logs**', (route) => {
     if (route.request().method() === 'DELETE') {
@@ -109,6 +111,10 @@ test('dashboard billing, history precision and settings remain usable', async ({
   await expect(selectShell).toHaveClass(/input-shell--select/)
   expect(await refreshSelectDesktop.evaluate((element) => getComputedStyle(element).appearance)).toBe('none')
   expect(await selectShell.evaluate((element) => getComputedStyle(element, '::after').content)).not.toBe('none')
+  await page.getByRole('button', { name: '通知', exact: true }).click()
+  await page.getByRole('button', { name: 'Webhook' }).click()
+  await page.getByTitle('插入 #TITLE#').click()
+  await expect(page.getByLabel('Body 模板')).toHaveValue('#TITLE#')
   await page.screenshot({ path: testInfo.outputPath('settings-select-desktop.png'), fullPage: true })
   await page.locator('.settings-panel').getByRole('button', { name: '关闭' }).click()
 
@@ -139,7 +145,17 @@ test('dashboard billing, history precision and settings remain usable', async ({
   await expect(page.getByRole('heading', { name: 'API Key' })).toBeVisible()
   await expect(page.getByText('旧版 Key')).toBeVisible()
   await expect(page.getByText('未配置权限')).toBeVisible()
+  await page.getByRole('button', { name: '关于' }).click()
+  await expect(page.getByRole('heading', { name: '关于 CDT Monitor' })).toBeVisible()
+  await expect(page.getByRole('link', { name: /NodeSeek/ })).toBeVisible()
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
   expect(overflow).toBeLessThanOrEqual(1)
   await page.screenshot({ path: testInfo.outputPath('settings-api-key-mobile.png'), fullPage: true })
+  await panel.getByRole('button', { name: '关闭' }).click()
+  await page.getByRole('button', { name: '管理员' }).click()
+  await expect(page.getByRole('heading', { name: '管理员设置' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '创建 Passkey' })).toBeDisabled()
+  const adminOverflow = await page.locator('.admin-settings-panel').evaluate((element) => element.scrollWidth - element.clientWidth)
+  expect(adminOverflow).toBeLessThanOrEqual(1)
+  await page.screenshot({ path: testInfo.outputPath('admin-settings-mobile.png'), fullPage: true })
 })

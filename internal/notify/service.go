@@ -258,12 +258,27 @@ func eventText(event domain.NotificationEvent) string {
 }
 
 func replacements(event domain.NotificationEvent) map[string]string {
+	traffic := event.Fields["当前流量"]
+	traffic = strings.TrimSpace(strings.TrimSuffix(traffic, "GB"))
+	threshold := event.Fields["设定阈值"]
+	threshold = strings.TrimSpace(strings.TrimSuffix(threshold, "%"))
+	instance := event.Fields["实例"]
+	status := event.Fields["实例状态"]
+	createdAt := event.CreatedAt.UTC().Format(time.RFC3339)
 	return map[string]string{
-		"#TITLE#":       event.Title,
-		"#MSG#":         event.Summary,
-		"#ACCOUNT#":     strconv.FormatInt(event.AccountID, 10),
-		"#TRAFFIC#":     event.Fields["当前流量"],
-		"#MAX_TRAFFIC#": event.Fields["设定阈值"],
+		"#TITLE#":             event.Title,
+		"#MSG#":               event.Summary,
+		"#ACCOUNT#":           strconv.FormatInt(event.AccountID, 10),
+		"#ACCOUNT_ID#":        strconv.FormatInt(event.AccountID, 10),
+		"#TRAFFIC#":           traffic,
+		"#TRAFFIC_GB#":        traffic,
+		"#MAX_TRAFFIC#":       threshold,
+		"#THRESHOLD_PERCENT#": threshold,
+		"#INSTANCE#":          instance,
+		"#STATUS#":            status,
+		"#TYPE#":              event.Type,
+		"#CREATED_AT#":        createdAt,
+		"#TIME#":              createdAt,
 	}
 }
 
