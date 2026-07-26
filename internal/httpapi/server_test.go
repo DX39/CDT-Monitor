@@ -12,6 +12,21 @@ import (
 	"github.com/wang4386/CDT-Monitor/internal/store"
 )
 
+func TestSecurityHeadersAllowFaviconEndpoint(t *testing.T) {
+	server := &Server{}
+	handler := server.securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request := httptest.NewRequest(http.MethodGet, "http://monitor.example.com/", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	csp := response.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "img-src 'self' data: https://a.favicon.im") {
+		t.Fatalf("favicon endpoint missing from CSP: %s", csp)
+	}
+}
+
 func TestBeginPasskeyLoginIncludesRegisteredCredentialIDs(t *testing.T) {
 	st, err := store.Open(t.TempDir())
 	if err != nil {

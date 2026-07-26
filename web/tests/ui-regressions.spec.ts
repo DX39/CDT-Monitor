@@ -47,6 +47,46 @@ test('login brand is positioned above the authentication card', async ({ page },
   await page.screenshot({ path: testInfo.outputPath('login-brand-desktop.png'), fullPage: true })
 })
 
+test('dashboard remains contained across supported viewport widths', async ({ page }, testInfo) => {
+  await page.route('**/api/v1/system/init-status', (route) => route.fulfill({ json: { initialized: true } }))
+  await page.route('**/api/v1/status', (route) => route.fulfill({ json: {
+    accounts: [{
+      id: 1,
+      account: 'LTAI5te***',
+      remark: '香港测试节点',
+      region: 'cn-hongkong',
+      region_name: '中国香港',
+      flow_total: 200,
+      flow_used: 12.5,
+      percentage: 6.25,
+      threshold: 95,
+      over_threshold: false,
+      instance_status: 'Running',
+      last_updated: new Date().toISOString(),
+      stale: false,
+      monthly_cost: 23.456,
+      balance: 123.45,
+      currency: 'CNY',
+    }],
+    system_last_run: new Date().toISOString(),
+  } }))
+  await page.route('**/api/v1/config', (route) => route.fulfill({ json: config }))
+
+  for (const viewport of [
+    { width: 320, height: 720 },
+    { width: 390, height: 844 },
+    { width: 768, height: 1024 },
+    { width: 1440, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport)
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: '资源控制台' })).toBeVisible()
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(overflow, `${viewport.width}px viewport overflow`).toBeLessThanOrEqual(1)
+    await page.screenshot({ path: testInfo.outputPath(`dashboard-${viewport.width}.png`), fullPage: true })
+  }
+})
+
 test('dashboard billing, history precision and settings remain usable', async ({ page }, testInfo) => {
   await page.route('**/api/v1/system/init-status', (route) => route.fulfill({ json: { initialized: true } }))
   await page.route('**/api/v1/status', (route) => route.fulfill({ json: {
@@ -96,29 +136,80 @@ test('dashboard billing, history precision and settings remain usable', async ({
   await expect(billing.getByText('¥23.46')).toBeVisible()
   await expect(billing.getByText('¥123.45')).toBeVisible()
   await expect(page.locator('.billing-row')).toHaveCount(0)
+  await expect(page.locator('.metric--blue .metric-icon')).toBeVisible()
+  await expect(page.locator('.metric--green .metric-icon')).toBeVisible()
+  await expect(page.locator('.metric--cyan .metric-icon')).toBeVisible()
+  await expect(page.locator('.metric--amber .metric-icon')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('dashboard-billing-desktop.png'), fullPage: true })
 
   await page.getByRole('button', { name: '查看历史流量' }).click()
   await expect(page.locator('.chart-modal')).toBeVisible()
-  await page.locator('.chart-area').hover({ position: { x: 440, y: 180 } })
+  const latestSample = page.locator('.chart-area .recharts-line-dot').last()
+  await expect(latestSample).toBeVisible()
+  await latestSample.hover()
   await expect(page.getByText('1.235')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('history-chart-desktop.png'), fullPage: true })
+  await page.getByRole('button', { name: '30 天' }).click()
+  const sparseBar = page.locator('.recharts-bar-rectangle .recharts-rectangle').first()
+  await expect(sparseBar).toBeVisible()
+  const sparseBarWidth = await sparseBar.evaluate((element) => (element as unknown as SVGGraphicsElement).getBBox().width)
+  expect(sparseBarWidth).toBeLessThanOrEqual(26)
+  await page.screenshot({ path: testInfo.outputPath('history-chart-daily-sparse.png'), fullPage: true })
+  await page.getByRole('button', { name: '24 小时' }).click()
   await page.locator('.chart-modal').getByRole('button', { name: '关闭' }).click()
 
   await page.getByRole('button', { name: '设置' }).click()
-  const refreshSelectDesktop = page.getByLabel('API 刷新间隔')
+  const settingsSection = page.locator('.settings-section')
+  const generalSectionWidth = await settingsSection.evaluate((element) => element.clientWidth)
+  const refreshSelectDesktop = page.getByRole('combobox', { name: 'API 刷新间隔' })
   await expect(refreshSelectDesktop).toBeVisible()
-  const selectShell = refreshSelectDesktop.locator('..')
-  await expect(selectShell).toHaveClass(/input-shell--select/)
-  expect(await refreshSelectDesktop.evaluate((element) => getComputedStyle(element).appearance)).toBe('none')
-  expect(await selectShell.evaluate((element) => getComputedStyle(element, '::after').content)).not.toBe('none')
+  await refreshSelectDesktop.click()
+  await expect(page.getByRole('listbox')).toBeVisible()
+  await expect(page.getByRole('option', { name: '1 小时' })).toBeVisible()
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('button', { name: '实例', exact: true }).click()
+  const accountSectionWidth = await settingsSection.evaluate((element) => element.clientWidth)
+  expect(Math.abs(accountSectionWidth - generalSectionWidth)).toBeLessThanOrEqual(1)
+  const regionSelect = page.getByRole('combobox', { name: '地域' })
+  await regionSelect.click()
+  await page.getByRole('combobox', { name: '地域' }).fill('zhangjiakou')
+  const zhangjiakou = page.getByRole('option', { name: /华北 3（张家口）.*cn-zhangjiakou/ })
+  await expect(zhangjiakou).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('settings-region-select-desktop.png'), fullPage: true })
+  await zhangjiakou.click()
+  await expect(page.getByRole('combobox', { name: '地域' })).toContainText('cn-zhangjiakou')
+
   await page.getByRole('button', { name: '通知', exact: true }).click()
+  const notificationSectionWidth = await settingsSection.evaluate((element) => element.clientWidth)
+  expect(Math.abs(notificationSectionWidth - generalSectionWidth)).toBeLessThanOrEqual(1)
   await page.getByRole('button', { name: 'Webhook' }).click()
   await page.getByTitle('插入 #TITLE#').click()
   await expect(page.getByLabel('Body 模板')).toHaveValue('#TITLE#')
   await page.screenshot({ path: testInfo.outputPath('settings-select-desktop.png'), fullPage: true })
+
+  await page.getByRole('button', { name: '关于' }).click()
+  const aboutSectionWidth = await settingsSection.evaluate((element) => element.clientWidth)
+  expect(Math.abs(aboutSectionWidth - generalSectionWidth)).toBeLessThanOrEqual(1)
+  await expect(page.locator('.about-links a')).toHaveCount(4)
+  await page.screenshot({ path: testInfo.outputPath('settings-about-desktop.png'), fullPage: true })
   await page.locator('.settings-panel').getByRole('button', { name: '关闭' }).click()
 
-  await page.setViewportSize({ width: 390, height: 844 })
+  for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport)
+    await page.getByRole('button', { name: '查看历史流量' }).click()
+    const mobileChart = page.locator('.chart-area')
+    await expect(mobileChart).toBeVisible()
+    const mobileTicks = page.locator('.chart-area .recharts-xAxis .recharts-cartesian-axis-tick text')
+    await expect(mobileTicks).toHaveCount(5)
+    const chartBox = await mobileChart.boundingBox()
+    const tickBoxes = await mobileTicks.evaluateAll((ticks) => ticks.map((tick) => tick.getBoundingClientRect().toJSON()))
+    expect(chartBox).not.toBeNull()
+    expect(tickBoxes[0].x).toBeGreaterThanOrEqual(chartBox!.x)
+    expect(tickBoxes[tickBoxes.length - 1].x + tickBoxes[tickBoxes.length - 1].width).toBeLessThanOrEqual(chartBox!.x + chartBox!.width)
+    await page.screenshot({ path: testInfo.outputPath(`history-chart-${viewport.width}.png`), fullPage: true })
+    await page.locator('.chart-modal').getByRole('button', { name: '关闭' }).click()
+  }
 
   await page.getByRole('button', { name: '菜单' }).click()
   await page.getByRole('button', { name: '设置' }).click()
@@ -131,6 +222,18 @@ test('dashboard billing, history precision and settings remain usable', async ({
   expect(panelBox!.x + panelBox!.width).toBeLessThan(390)
   expect(panelBox!.y + panelBox!.height).toBeLessThan(844)
   expect(await panel.evaluate((element) => getComputedStyle(element).borderRadius)).not.toBe('0px')
+
+  await page.getByRole('button', { name: '实例', exact: true }).click()
+  await page.getByRole('combobox', { name: '地域' }).click()
+  await page.getByRole('combobox', { name: '地域' }).fill('cn-')
+  const mobileRegionMenu = page.getByRole('listbox')
+  await expect(mobileRegionMenu).toBeVisible()
+  const mobileRegionMenuBox = await mobileRegionMenu.boundingBox()
+  expect(mobileRegionMenuBox).not.toBeNull()
+  expect(mobileRegionMenuBox!.x).toBeGreaterThanOrEqual(0)
+  expect(mobileRegionMenuBox!.x + mobileRegionMenuBox!.width).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: testInfo.outputPath('settings-region-select-mobile.png'), fullPage: true })
+  await page.keyboard.press('Escape')
 
   await page.getByRole('button', { name: '日志' }).click()
   await expect(page.getByRole('heading', { name: '运行日志' })).toBeVisible()
@@ -148,6 +251,14 @@ test('dashboard billing, history precision and settings remain usable', async ({
   await page.getByRole('button', { name: '关于' }).click()
   await expect(page.getByRole('heading', { name: '关于 CDT Monitor' })).toBeVisible()
   await expect(page.getByRole('link', { name: /NodeSeek/ })).toBeVisible()
+  const faviconSources = await page.locator('.about-link__favicon img').evaluateAll((images) => images.map((image) => image.getAttribute('src')))
+  expect(faviconSources).toEqual([
+    'https://a.favicon.im/github.com',
+    'https://a.favicon.im/qninq.cn',
+    'https://a.favicon.im/nodeseek.com',
+    'https://a.favicon.im/linux.do',
+  ])
+  await expect.poll(() => page.locator('.about-link__favicon').evaluateAll((items) => items.every((item) => item.getAttribute('data-state') !== 'loading'))).toBe(true)
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
   expect(overflow).toBeLessThanOrEqual(1)
   await page.screenshot({ path: testInfo.outputPath('settings-api-key-mobile.png'), fullPage: true })

@@ -1,15 +1,13 @@
-import { Children, cloneElement, isValidElement, useCallback, useEffect, useId, useState } from 'react'
+import { Children, cloneElement, isValidElement, lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import {
-  Activity, AlertTriangle, ArrowLeft, ArrowRight, Bell, Check, ChevronRight, CircleDollarSign,
+  Activity, AlertTriangle, ArrowLeft, ArrowRight, Bell, Check, ChevronDown, ChevronRight, CircleDollarSign,
   Clock3, Cloud, Copy, Database, ExternalLink, Eye, EyeOff, FileClock, Fingerprint, Gauge,
-  Github, Globe2, History as HistoryIcon, Info, KeyRound, LoaderCircle, LockKeyhole, LogOut,
-  Mail, Menu, Play, Plus, Power, RefreshCw, Save, Server, Settings, ShieldCheck, Square,
+  Globe2, History as HistoryIcon, Info, KeyRound, LoaderCircle, LockKeyhole, LogOut,
+  Mail, Menu, Play, Plus, Power, RefreshCw, Save, Search, Server, Settings, ShieldCheck,
   Trash2, UserCog, Webhook, X, Zap,
 } from 'lucide-react'
-import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from 'recharts'
 import { APIError, api, waitForJob } from './api'
 import {
   APIKeyRecord, Account, AccountSummary, Config, History, Job, LogEntry, PasskeyRecord,
@@ -19,13 +17,22 @@ import {
 type Phase = 'loading' | 'setup' | 'login' | 'dashboard' | 'fatal'
 type Toast = { id: number; tone: 'success' | 'error' | 'info'; message: string }
 type PasskeyCeremony = { session_id: string; public_key: { publicKey: Record<string, unknown> } }
+type SelectOption = { value: string; label: string; meta?: string }
+type SelectPosition = { left: number; top: number; width: number; maxHeight: number; placement: 'up' | 'down' }
 
-const regions = [
+const HistoryChart = lazy(() => import('./HistoryChart'))
+
+const regions: SelectOption[] = [
   ['cn-hongkong', '中国香港'], ['cn-hangzhou', '华东 1（杭州）'], ['cn-shanghai', '华东 2（上海）'],
   ['cn-qingdao', '华北 1（青岛）'], ['cn-beijing', '华北 2（北京）'], ['cn-zhangjiakou', '华北 3（张家口）'],
   ['cn-huhehaote', '华北 5（呼和浩特）'], ['cn-wulanchabu', '华北 6（乌兰察布）'], ['cn-shenzhen', '华南 1（深圳）'],
   ['cn-heyuan', '华南 2（河源）'], ['cn-guangzhou', '华南 3（广州）'], ['cn-chengdu', '西南 1（成都）'],
   ['ap-southeast-1', '新加坡'], ['ap-northeast-1', '日本（东京）'], ['us-west-1', '美国（硅谷）'], ['us-east-1', '美国（弗吉尼亚）'],
+].map(([value, label]) => ({ value, label, meta: value }))
+
+const refreshIntervals: SelectOption[] = [
+  { value: '60', label: '1 分钟' }, { value: '300', label: '5 分钟' }, { value: '600', label: '10 分钟' },
+  { value: '1800', label: '30 分钟' }, { value: '3600', label: '1 小时' },
 ]
 
 export default function App() {
@@ -197,7 +204,7 @@ function SetupWizard({ onComplete, notify }: { onComplete: () => Promise<void>; 
         {step === 1 && (
           <div className="form-grid">
             <Field label="流量告警阈值"><input type="number" min={1} max={100} value={config.traffic_threshold} onChange={(event) => setConfig({ ...config, traffic_threshold: Number(event.target.value) })} /><span className="suffix">%</span></Field>
-            <Field label="状态刷新频率"><select value={config.api_interval} onChange={(event) => setConfig({ ...config, api_interval: Number(event.target.value) })}><option value={60}>1 分钟</option><option value={300}>5 分钟</option><option value={600}>10 分钟</option><option value={1800}>30 分钟</option></select></Field>
+            <SelectField label="状态刷新频率" value={`${config.api_interval}`} options={refreshIntervals.slice(0, 4)} onChange={(value) => setConfig({ ...config, api_interval: Number(value) })} />
             <div className="field field--wide"><label>停机模式</label><Segmented value={config.shutdown_mode} options={[['KeepCharging', '普通停机'], ['StopCharging', '节省停机']]} onChange={(value) => setConfig({ ...config, shutdown_mode: value as Config['shutdown_mode'] })} /></div>
             <ToggleRow title="抢占式实例保活" icon={<Activity />} checked={config.keep_alive} onChange={(checked) => setConfig({ ...config, keep_alive: checked })} />
             <ToggleRow title="账单与余额显示" icon={<CircleDollarSign />} checked={config.enable_billing} onChange={(checked) => setConfig({ ...config, enable_billing: checked })} />
@@ -302,10 +309,10 @@ function Dashboard({ status, config, onRefresh, onSettings, onAdmin, onHistory, 
 
       <section className="overview-head"><div><p className="eyebrow">LIVE INFRASTRUCTURE</p><h1>资源控制台</h1><p className="muted">{new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}</p></div><div className="overview-time"><Clock3 size={17} /><span>上次任务</span><b>{status.system_last_run ? formatTime(status.system_last_run) : '尚未运行'}</b></div></section>
       <section className="metric-strip">
-        <Metric icon={<Server />} label="实例总数" value={`${status.accounts.length}`} suffix="台" />
+        <Metric icon={<Server />} label="实例总数" value={`${status.accounts.length}`} suffix="台" tone="blue" />
         <Metric icon={<Activity />} label="运行中" value={`${running}`} suffix="台" tone="green" />
-        <Metric icon={<Gauge />} label="累计流量" value={used.toFixed(1)} suffix="GB" />
-        <Metric icon={<AlertTriangle />} label="阈值告警" value={`${warning}`} suffix="项" tone={warning ? 'red' : 'neutral'} />
+        <Metric icon={<Gauge />} label="累计流量" value={used.toFixed(1)} suffix="GB" tone="cyan" />
+        <Metric icon={<AlertTriangle />} label="阈值告警" value={`${warning}`} suffix="项" tone="amber" />
       </section>
 
       <div className="section-heading"><div><p className="eyebrow">MANAGED INSTANCES</p><h2>实例与流量</h2></div><span>{status.accounts.length} 个配置</span></div>
@@ -396,7 +403,7 @@ function GeneralSettings({ config, onChange }: { config: Config; onChange: (conf
   return <div className="settings-section"><SectionTitle icon={<Gauge />} title="监控策略" subtitle="AUTOMATION POLICY" />
     <div className="form-grid settings-form">
       <Field label="告警阈值"><input type="number" min={1} max={100} value={config.traffic_threshold} onChange={(event) => onChange({ ...config, traffic_threshold: Number(event.target.value) })} /><span className="suffix">%</span></Field>
-      <Field label="API 刷新间隔"><select value={config.api_interval} onChange={(event) => onChange({ ...config, api_interval: Number(event.target.value) })}><option value={60}>1 分钟</option><option value={300}>5 分钟</option><option value={600}>10 分钟</option><option value={1800}>30 分钟</option><option value={3600}>1 小时</option></select></Field>
+      <SelectField label="API 刷新间隔" value={`${config.api_interval}`} options={refreshIntervals} onChange={(value) => onChange({ ...config, api_interval: Number(value) })} />
       <Field label="系统时区"><input value={config.timezone} onChange={(event) => onChange({ ...config, timezone: event.target.value })} /></Field>
       <div className="field"><label>阈值动作</label><Segmented value={config.threshold_action} options={[['stop_and_notify', '停机并通知'], ['notify_only', '仅通知']]} onChange={(value) => onChange({ ...config, threshold_action: value as Config['threshold_action'] })} /></div>
       <div className="field field--wide"><label>停机模式</label><Segmented value={config.shutdown_mode} options={[['KeepCharging', '普通停机'], ['StopCharging', '节省停机']]} onChange={(value) => onChange({ ...config, shutdown_mode: value as Config['shutdown_mode'] })} /></div>
@@ -422,9 +429,9 @@ function AccountFields({ account, onChange, compact = false }: { account: Accoun
     <Field label="AccessKey ID"><input autoComplete="off" value={account.access_key_id} onChange={(event) => onChange({ ...account, access_key_id: event.target.value })} placeholder="LTAI5t…" /></Field>
     <Field label={`AccessKey Secret${account.secret_configured ? ' · 已配置' : ''}`}><input type="password" autoComplete="new-password" value={account.access_key_secret || ''} onChange={(event) => onChange({ ...account, access_key_secret: event.target.value })} placeholder={account.secret_configured ? '留空保持不变' : '输入 Secret'} /></Field>
     <Field label="实例 ID"><input value={account.instance_id} onChange={(event) => onChange({ ...account, instance_id: event.target.value })} placeholder="i-bp…" /></Field>
-    <Field label="地域"><select value={account.region_id} onChange={(event) => onChange({ ...account, region_id: event.target.value })}>{regions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field>
+    <SelectField label="地域" value={account.region_id} options={regions} searchable searchPlaceholder="搜索地域名称或代码" onChange={(value) => onChange({ ...account, region_id: value })} />
     <Field label="流量额度"><input type="number" min={1} value={account.max_traffic} onChange={(event) => onChange({ ...account, max_traffic: Number(event.target.value) })} /><span className="suffix">GB</span></Field>
-    <Field label="站点类型"><select value={account.site_type} onChange={(event) => onChange({ ...account, site_type: event.target.value as Account['site_type'] })}><option value="china">中国站 · CNY</option><option value="international">国际站 · USD</option></select></Field>
+    <SelectField label="站点类型" value={account.site_type} options={[{ value: 'china', label: '中国站', meta: 'CNY' }, { value: 'international', label: '国际站', meta: 'USD' }]} onChange={(value) => onChange({ ...account, site_type: value as Account['site_type'] })} />
     <Field label="备注"><input value={account.remark} onChange={(event) => onChange({ ...account, remark: event.target.value })} placeholder="香港主节点" /></Field>
     <ToggleRow title="每日定时开关机" icon={<Clock3 />} checked={account.schedule_enabled} onChange={(checked) => onChange({ ...account, schedule_enabled: checked })} />
     {account.schedule_enabled && <><Field label="开机时间"><input type="time" value={account.start_time} onChange={(event) => onChange({ ...account, start_time: event.target.value })} /></Field><Field label="关机时间"><input type="time" value={account.stop_time} onChange={(event) => onChange({ ...account, stop_time: event.target.value })} /></Field></>}
@@ -444,9 +451,9 @@ function NotificationSettings({ config, onChange, notify }: { config: Config; on
   return <div className="settings-section"><SectionTitle icon={<Bell />} title="通知通道" subtitle="DELIVERY CHANNELS" />
     {channel === 'webhook' && <WebhookVariablePicker body={n.webhook.body} onBodyChange={(body) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, body } } })} />}
     <div className="channel-tabs"><button className={channel === 'email' ? 'active' : ''} onClick={() => setChannel('email')}><Mail />Email</button><button className={channel === 'telegram' ? 'active' : ''} onClick={() => setChannel('telegram')}><Zap />Telegram</button><button className={channel === 'webhook' ? 'active' : ''} onClick={() => setChannel('webhook')}><Webhook />Webhook</button></div>
-    {channel === 'email' && <div className="form-grid settings-form"><ToggleRow title="启用 Email" icon={<Mail />} checked={n.email.enabled} onChange={(enabled) => onChange({ ...config, notifications: { ...n, email: { ...n.email, enabled } } })} /><Field label="接收邮箱"><input type="email" value={n.email.to} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, to: event.target.value } } })} /></Field><Field label="SMTP Host"><input value={n.email.host} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, host: event.target.value } } })} /></Field><Field label="端口"><input type="number" value={n.email.port} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, port: Number(event.target.value) } } })} /></Field><Field label="安全模式"><select value={n.email.security} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, security: event.target.value } } })}><option value="ssl">SSL</option><option value="tls">STARTTLS</option><option value="none">无</option></select></Field><Field label="用户名"><input value={n.email.username} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, username: event.target.value } } })} /></Field><Field label={`密码${n.email.password_configured ? ' · 已配置' : ''}`}><input type="password" value={n.email.password || ''} placeholder={n.email.password_configured ? '留空保持不变' : ''} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, password: event.target.value } } })} /></Field></div>}
-    {channel === 'telegram' && <div className="form-grid settings-form"><ToggleRow title="启用 Telegram" icon={<Zap />} checked={n.telegram.enabled} onChange={(enabled) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, enabled } } })} /><Field label={`Bot Token${n.telegram.token_configured ? ' · 已配置' : ''}`}><input type="password" value={n.telegram.token || ''} placeholder={n.telegram.token_configured ? '留空保持不变' : ''} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, token: event.target.value } } })} /></Field><Field label="Chat ID"><input value={n.telegram.chat_id} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, chat_id: event.target.value } } })} /></Field><Field label="代理类型"><select value={n.telegram.proxy_type} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_type: event.target.value } } })}><option value="none">直连</option><option value="custom">自定义反代</option><option value="socks5">SOCKS5</option></select></Field>{n.telegram.proxy_type === 'custom' && <Field label="反代 URL"><input value={n.telegram.proxy_url} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_url: event.target.value } } })} /></Field>}{n.telegram.proxy_type === 'socks5' && <><Field label="代理 IP"><input value={n.telegram.proxy_ip} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_ip: event.target.value } } })} /></Field><Field label="代理端口"><input value={n.telegram.proxy_port} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_port: event.target.value } } })} /></Field><Field label="代理账号"><input value={n.telegram.proxy_user} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_user: event.target.value } } })} /></Field><Field label={`代理密码${n.telegram.proxy_password_configured ? ' · 已配置' : ''}`}><input type="password" value={n.telegram.proxy_pass || ''} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_pass: event.target.value } } })} /></Field></>}</div>}
-    {channel === 'webhook' && <div className="form-grid settings-form"><ToggleRow title="启用 Webhook" icon={<Webhook />} checked={n.webhook.enabled} onChange={(enabled) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, enabled } } })} /><Field label="Webhook URL"><input value={n.webhook.url} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, url: event.target.value } } })} /></Field><Field label="请求方式"><select value={n.webhook.method} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, method: event.target.value } } })}><option>GET</option><option>POST</option></select></Field><Field label="请求类型"><select value={n.webhook.request_type} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, request_type: event.target.value } } })}><option>JSON</option><option>FORM</option></select></Field><Field label="自定义 Headers"><textarea value={n.webhook.headers || ''} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, headers: event.target.value } } })} placeholder='{"Authorization":"Bearer …"}' /></Field><Field label="Body 模板"><textarea value={n.webhook.body} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, body: event.target.value } } })} placeholder='{"title":"#TITLE#","message":"#MSG#"}' /></Field></div>}
+    {channel === 'email' && <div className="form-grid settings-form"><ToggleRow title="启用 Email" icon={<Mail />} checked={n.email.enabled} onChange={(enabled) => onChange({ ...config, notifications: { ...n, email: { ...n.email, enabled } } })} /><Field label="接收邮箱"><input type="email" value={n.email.to} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, to: event.target.value } } })} /></Field><Field label="SMTP Host"><input value={n.email.host} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, host: event.target.value } } })} /></Field><Field label="端口"><input type="number" value={n.email.port} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, port: Number(event.target.value) } } })} /></Field><SelectField label="安全模式" value={n.email.security} options={[{ value: 'ssl', label: 'SSL' }, { value: 'tls', label: 'STARTTLS' }, { value: 'none', label: '无' }]} onChange={(value) => onChange({ ...config, notifications: { ...n, email: { ...n.email, security: value } } })} /><Field label="用户名"><input value={n.email.username} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, username: event.target.value } } })} /></Field><Field label={`密码${n.email.password_configured ? ' · 已配置' : ''}`}><input type="password" value={n.email.password || ''} placeholder={n.email.password_configured ? '留空保持不变' : ''} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, password: event.target.value } } })} /></Field></div>}
+    {channel === 'telegram' && <div className="form-grid settings-form"><ToggleRow title="启用 Telegram" icon={<Zap />} checked={n.telegram.enabled} onChange={(enabled) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, enabled } } })} /><Field label={`Bot Token${n.telegram.token_configured ? ' · 已配置' : ''}`}><input type="password" value={n.telegram.token || ''} placeholder={n.telegram.token_configured ? '留空保持不变' : ''} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, token: event.target.value } } })} /></Field><Field label="Chat ID"><input value={n.telegram.chat_id} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, chat_id: event.target.value } } })} /></Field><SelectField label="代理类型" value={n.telegram.proxy_type} options={[{ value: 'none', label: '直连' }, { value: 'custom', label: '自定义反代' }, { value: 'socks5', label: 'SOCKS5' }]} onChange={(value) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_type: value } } })} />{n.telegram.proxy_type === 'custom' && <Field label="反代 URL"><input value={n.telegram.proxy_url} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_url: event.target.value } } })} /></Field>}{n.telegram.proxy_type === 'socks5' && <><Field label="代理 IP"><input value={n.telegram.proxy_ip} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_ip: event.target.value } } })} /></Field><Field label="代理端口"><input value={n.telegram.proxy_port} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_port: event.target.value } } })} /></Field><Field label="代理账号"><input value={n.telegram.proxy_user} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_user: event.target.value } } })} /></Field><Field label={`代理密码${n.telegram.proxy_password_configured ? ' · 已配置' : ''}`}><input type="password" value={n.telegram.proxy_pass || ''} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_pass: event.target.value } } })} /></Field></>}</div>}
+    {channel === 'webhook' && <div className="form-grid settings-form"><ToggleRow title="启用 Webhook" icon={<Webhook />} checked={n.webhook.enabled} onChange={(enabled) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, enabled } } })} /><Field label="Webhook URL"><input value={n.webhook.url} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, url: event.target.value } } })} /></Field><SelectField label="请求方式" value={n.webhook.method} options={[{ value: 'GET', label: 'GET' }, { value: 'POST', label: 'POST' }]} onChange={(value) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, method: value } } })} /><SelectField label="请求类型" value={n.webhook.request_type} options={[{ value: 'JSON', label: 'JSON' }, { value: 'FORM', label: 'FORM' }]} onChange={(value) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, request_type: value } } })} /><Field label="自定义 Headers"><textarea value={n.webhook.headers || ''} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, headers: event.target.value } } })} placeholder='{"Authorization":"Bearer …"}' /></Field><Field label="Body 模板"><textarea value={n.webhook.body} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, body: event.target.value } } })} placeholder='{"title":"#TITLE#","message":"#MSG#"}' /></Field></div>}
     <button className="button button--secondary" disabled={testing} onClick={() => void test()}>{testing ? <LoaderCircle className="spin" /> : <Bell />}发送测试</button>
   </div>
 }
@@ -571,16 +578,20 @@ function AboutSettings({ notify }: { notify: (message: string, tone?: Toast['ton
     catch (cause) { notify(cause instanceof Error ? cause.message : '版本检查失败', 'error') }
     finally { setChecking(false) }
   }
-  return <div className="settings-section about-section"><SectionTitle icon={<Info />} title="关于 CDT Monitor" subtitle="PROJECT INFORMATION" /><div className="about-version"><div><span>当前版本</span><b>{info?.version || '加载中...'}</b><small>{info?.commit && info.commit !== 'unknown' ? `${info.commit} · ${info.built_at}` : '构建信息未知'}</small></div><button className="button button--secondary button--small" onClick={() => void checkVersion()} disabled={checking}>{checking ? <LoaderCircle className="spin" /> : <RefreshCw />}检查更新</button></div>{info?.latest_version && <p className="inline-hint">GitHub 最新版本：{info.latest_version}{info.latest_version === info.version ? '，当前已是最新版本' : '，请查看发布页获取更新'}</p>}<div className="about-links"><a href="https://github.com/wang4386/CDT-Monitor" target="_blank" rel="noreferrer"><Github /><span><b>GitHub 仓库</b><small>源代码、Issue 与 Release</small></span><ExternalLink /></a><a href="https://qninq.cn" target="_blank" rel="noreferrer"><Globe2 /><span><b>作者博客</b><small>qninq.cn</small></span><ExternalLink /></a><a href="https://www.nodeseek.com/" target="_blank" rel="noreferrer"><Globe2 /><span><b>NodeSeek</b><small>社区交流</small></span><ExternalLink /></a><a href="https://linux.do/" target="_blank" rel="noreferrer"><Globe2 /><span><b>Linux.do</b><small>技术社区交流</small></span><ExternalLink /></a></div></div>
+  return <div className="settings-section about-section"><SectionTitle icon={<Info />} title="关于 CDT Monitor" subtitle="PROJECT INFORMATION" /><div className="about-version"><div><span>当前版本</span><b>{info?.version || '加载中...'}</b><small>{info?.commit && info.commit !== 'unknown' ? `${info.commit} · ${info.built_at}` : '构建信息未知'}</small></div><button className="button button--secondary button--small" onClick={() => void checkVersion()} disabled={checking}>{checking ? <LoaderCircle className="spin" /> : <RefreshCw />}检查更新</button></div>{info?.latest_version && <p className="inline-hint">GitHub 最新版本：{info.latest_version}{info.latest_version === info.version ? '，当前已是最新版本' : '，请查看发布页获取更新'}</p>}<div className="about-links"><a href="https://github.com/wang4386/CDT-Monitor" target="_blank" rel="noreferrer"><SiteFavicon domain="github.com" label="GitHub" /><span><b>GitHub 仓库</b><small>源代码、Issue 与 Release</small></span><ExternalLink /></a><a href="https://qninq.cn" target="_blank" rel="noreferrer"><SiteFavicon domain="qninq.cn" label="qninq.cn" /><span><b>作者博客</b><small>qninq.cn</small></span><ExternalLink /></a><a href="https://www.nodeseek.com/" target="_blank" rel="noreferrer"><SiteFavicon domain="nodeseek.com" label="NodeSeek" /><span><b>NodeSeek</b><small>社区交流</small></span><ExternalLink /></a><a href="https://linux.do/" target="_blank" rel="noreferrer"><SiteFavicon domain="linux.do" label="linux.do" /><span><b>Linux.do</b><small>技术社区交流</small></span><ExternalLink /></a></div></div>
+}
+
+function SiteFavicon({ domain, label }: { domain: string; label: string }) {
+  const [state, setState] = useState<'loading' | 'loaded' | 'failed'>('loading')
+  return <span className="about-link__favicon" data-state={state}><img className={state === 'failed' ? 'is-hidden' : ''} src={`https://a.favicon.im/${domain}`} alt={`${label} favicon`} loading="lazy" decoding="async" referrerPolicy="no-referrer" onLoad={() => setState('loaded')} onError={() => setState('failed')} />{state === 'loading' && <LoaderCircle className="spin" aria-hidden="true" />}{state === 'failed' && <Globe2 aria-hidden="true" />}</span>
 }
 
 function HistoryModal({ account, onClose }: { account: AccountSummary; onClose: () => void }) {
   const [history, setHistory] = useState<History | null>(null)
   const [range, setRange] = useState<'hourly' | 'daily'>('hourly')
   useEffect(() => { void api<History>(`/api/v1/accounts/${account.id}/history`).then(setHistory) }, [account.id])
-  const data = (history?.[range] || []).map((point) => ({ name: range === 'hourly' ? new Date(point.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : new Date(point.at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }), traffic: Math.round(point.traffic * 1000) / 1000 }))
-  const tooltip = { contentStyle: { borderRadius: 14, border: '1px solid #e5e5ea' }, formatter: (value: number | string) => [typeof value === 'number' ? value.toFixed(3) : value, '流量 (GB)'] as [string | number, string] }
-  return <div className="modal-layer" role="dialog" aria-modal="true"><div className="modal-scrim" onClick={onClose} /><section className="chart-modal glass-card"><header><div><p className="eyebrow">TRAFFIC HISTORY</p><h2>{account.remark || account.account}</h2></div><IconButton label="关闭" onClick={onClose}><X /></IconButton></header><Segmented value={range} options={[['hourly', '24 小时'], ['daily', '30 天']]} onChange={(value) => setRange(value as typeof range)} /><div className="chart-area">{!history ? <LoaderCircle className="spin chart-loader" /> : data.length === 0 ? <div className="subtle-empty"><HistoryIcon />等待采样数据</div> : <ResponsiveContainer width="100%" height="100%">{range === 'hourly' ? <AreaChart data={data}><CartesianGrid stroke="#e5e5ea" vertical={false} /><XAxis dataKey="name" tickLine={false} axisLine={false} /><YAxis tickLine={false} axisLine={false} /><Tooltip {...tooltip} /><Area type="monotone" dataKey="traffic" stroke="#1c1c1e" fill="#d1d1d6" strokeWidth={2} /></AreaChart> : <BarChart data={data}><CartesianGrid stroke="#e5e5ea" vertical={false} /><XAxis dataKey="name" tickLine={false} axisLine={false} /><YAxis tickLine={false} axisLine={false} /><Tooltip {...tooltip} /><Bar dataKey="traffic" fill="#1c1c1e" radius={[5, 5, 0, 0]} /></BarChart>}</ResponsiveContainer>}</div></section></div>
+  const data = (history?.[range] || []).map((point) => ({ at: new Date(point.at).getTime(), traffic: Math.round(point.traffic * 1000) / 1000 }))
+  return <div className="modal-layer" role="dialog" aria-modal="true"><div className="modal-scrim" onClick={onClose} /><section className="chart-modal glass-card"><header><div><p className="eyebrow">TRAFFIC HISTORY</p><h2>{account.remark || account.account}</h2></div><IconButton label="关闭" onClick={onClose}><X /></IconButton></header><Segmented value={range} options={[['hourly', '24 小时'], ['daily', '30 天']]} onChange={(value) => setRange(value as typeof range)} /><div className="chart-area" aria-label="流量历史图表">{!history ? <LoaderCircle className="spin chart-loader" /> : data.length === 0 ? <div className="subtle-empty"><HistoryIcon />等待采样数据</div> : <Suspense fallback={<LoaderCircle className="spin chart-loader" />}><HistoryChart data={data} range={range} /></Suspense>}</div></section></div>
 }
 
 function BrandMark() { return <span className="brand-mark"><Cloud size={21} /></span> }
@@ -588,15 +599,131 @@ function StepDots({ current }: { current: number }) { return <div className="ste
 function Metric({ icon, label, value, suffix, tone = 'neutral' }: { icon: React.ReactNode; label: string; value: string; suffix: string; tone?: string }) { return <article className={`metric metric--${tone}`}><span className="metric-icon">{icon}</span><div><label>{label}</label><strong>{value}<small>{suffix}</small></strong></div></article> }
 function SectionTitle({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) { return <div className="section-title"><span>{icon}</span><div><p>{subtitle}</p><h3>{title}</h3></div></div> }
 
+function SelectField({ label, value, options, onChange, searchable = false, searchPlaceholder = '搜索选项' }: { label: string; value: string; options: SelectOption[]; onChange: (value: string) => void; searchable?: boolean; searchPlaceholder?: string }) {
+  const id = useId()
+  return <div className="field"><label htmlFor={id}>{label}</label><ElegantSelect id={id} value={value} options={options} onChange={onChange} searchable={searchable} searchPlaceholder={searchPlaceholder} /></div>
+}
+
+function ElegantSelect({ id, value, options, onChange, searchable, searchPlaceholder }: { id: string; value: string; options: SelectOption[]; onChange: (value: string) => void; searchable: boolean; searchPlaceholder: string }) {
+  const listId = `${id}-listbox`
+  const rootRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [position, setPosition] = useState<SelectPosition | null>(null)
+  const selected = options.find((option) => option.value === value)
+  const normalizedQuery = query.trim().toLocaleLowerCase('zh-CN')
+  const filteredOptions = searchable && normalizedQuery
+    ? options.filter((option) => `${option.label} ${option.meta || ''} ${option.value}`.toLocaleLowerCase('zh-CN').includes(normalizedQuery))
+    : options
+  const activeOptionId = open && filteredOptions[activeIndex] ? `${listId}-option-${activeIndex}` : undefined
+
+  const updatePosition = useCallback(() => {
+    const rect = rootRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const availableBelow = window.innerHeight - rect.bottom - 12
+    const availableAbove = rect.top - 12
+    const placement = availableBelow >= 220 || availableBelow >= availableAbove ? 'down' : 'up'
+    const available = placement === 'down' ? availableBelow : availableAbove
+    setPosition({
+      left: Math.min(Math.max(12, rect.left), Math.max(12, window.innerWidth - rect.width - 12)),
+      top: placement === 'down' ? rect.bottom + 8 : rect.top - 8,
+      width: rect.width,
+      maxHeight: Math.max(120, Math.min(320, available - 8)),
+      placement,
+    })
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [open, updatePosition])
+
+  useEffect(() => {
+    if (!open) return
+    const handleOutside = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
+        setOpen(false)
+        setQuery('')
+      }
+    }
+    document.addEventListener('pointerdown', handleOutside, true)
+    return () => document.removeEventListener('pointerdown', handleOutside, true)
+  }, [open])
+
+  useEffect(() => {
+    if (open && searchable) window.requestAnimationFrame(() => searchRef.current?.focus())
+  }, [open, searchable])
+
+  const openSelect = () => {
+    setQuery('')
+    setActiveIndex(Math.max(0, options.findIndex((option) => option.value === value)))
+    setOpen(true)
+  }
+  const closeSelect = (restoreFocus = false) => {
+    setOpen(false)
+    setQuery('')
+    if (restoreFocus) window.requestAnimationFrame(() => (rootRef.current?.querySelector('[role="combobox"]') as HTMLElement | null)?.focus())
+  }
+  const choose = (option: SelectOption) => {
+    onChange(option.value)
+    closeSelect(true)
+  }
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (!open && ['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {
+      event.preventDefault()
+      openSelect()
+      return
+    }
+    if (!open) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeSelect(true)
+    } else if (event.key === 'Tab') {
+      closeSelect()
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      if (filteredOptions.length) setActiveIndex((index) => (index + (event.key === 'ArrowDown' ? 1 : -1) + filteredOptions.length) % filteredOptions.length)
+    } else if (event.key === 'Enter' && filteredOptions[activeIndex]) {
+      event.preventDefault()
+      choose(filteredOptions[activeIndex])
+    }
+  }
+
+  const menu = position && (
+    <div ref={menuRef} id={listId} role="listbox" className={`select-popover select-popover--${position.placement}`} style={{ left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight }}>
+      {filteredOptions.length ? filteredOptions.map((option, index) => (
+        <button type="button" role="option" id={`${listId}-option-${index}`} aria-selected={option.value === value} className={`select-option ${index === activeIndex ? 'active' : ''}`} key={option.value} onMouseMove={() => setActiveIndex(index)} onClick={() => choose(option)}>
+          <span className="select-option__label">{option.label}</span>
+          <span className="select-option__aside">{option.meta && <code>{option.meta}</code>}{option.value === value && <Check aria-hidden="true" />}</span>
+        </button>
+      )) : <div className="select-empty"><Search aria-hidden="true" /><span>未找到匹配选项</span></div>}
+    </div>
+  )
+
+  return <div className={`select-control ${open ? 'open' : ''}`} ref={rootRef}>
+    {searchable && open ? <div className="select-search"><Search aria-hidden="true" /><input ref={searchRef} id={id} role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls={listId} aria-activedescendant={activeOptionId} autoComplete="off" spellCheck={false} value={query} placeholder={searchPlaceholder} onChange={(event) => { setQuery(event.target.value); setActiveIndex(0) }} onKeyDown={handleKeyDown} /><ChevronDown className="select-chevron" aria-hidden="true" /></div> : <button id={id} type="button" role="combobox" aria-haspopup="listbox" aria-expanded={open} aria-controls={listId} aria-activedescendant={activeOptionId} className="select-trigger" onClick={() => open ? closeSelect() : openSelect()} onKeyDown={handleKeyDown}><span className="select-trigger__label">{selected?.label || value || '请选择'}</span>{selected?.meta && <code>{selected.meta}</code>}<ChevronDown className="select-chevron" aria-hidden="true" /></button>}
+    {open && menu && createPortal(menu, document.body)}
+  </div>
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   const id = useId()
-  const isSelect = Children.toArray(children).some((child) => isValidElement(child) && child.type === 'select')
   const linked = Children.map(children, (child) => {
-    if (!isValidElement(child) || !['input', 'select', 'textarea'].includes(String(child.type))) return child
+    if (!isValidElement(child) || !['input', 'textarea'].includes(String(child.type))) return child
     const element = child as ReactElement<{ id?: string }>
     return cloneElement(element, { id: element.props.id || id })
   })
-  return <div className="field"><label htmlFor={id}>{label}</label><div className={`input-shell ${isSelect ? 'input-shell--select' : ''}`}>{linked}</div></div>
+  return <div className="field"><label htmlFor={id}>{label}</label><div className="input-shell">{linked}</div></div>
 }
 function PasswordField({ label, value, visible, onVisible, onChange, autoComplete }: { label: string; value: string; visible: boolean; onVisible: () => void; onChange: (value: string) => void; autoComplete: string }) { return <Field label={label}><LockKeyhole size={17} /><input type={visible ? 'text' : 'password'} value={value} onChange={(event) => onChange(event.target.value)} autoComplete={autoComplete} /><button type="button" className="input-action" onClick={onVisible} aria-label={visible ? '隐藏密码' : '显示密码'}>{visible ? <EyeOff /> : <Eye />}</button></Field> }
 function Segmented({ value, options, onChange }: { value: string; options: readonly (readonly [string, string])[]; onChange: (value: string) => void }) { return <div className="segmented">{options.map(([key, label]) => <button type="button" className={value === key ? 'active' : ''} key={key} onClick={() => onChange(key)}>{label}</button>)}</div> }
