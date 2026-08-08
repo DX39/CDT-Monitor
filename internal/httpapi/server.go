@@ -95,6 +95,7 @@ func New(st *store.Store, eng *engine.Engine, assets fs.FS, logger *slog.Logger,
 	mux.Handle("GET /api/v1/config", s.require("admin", http.HandlerFunc(s.getConfig)))
 	mux.Handle("PUT /api/v1/config", s.require("admin", http.HandlerFunc(s.saveConfig)))
 	mux.Handle("GET /api/v1/accounts/{id}/history", s.require("widget:read", http.HandlerFunc(s.history)))
+	mux.Handle("POST /api/v1/accounts/refresh", s.require("instance:control", http.HandlerFunc(s.refreshAll)))
 	mux.Handle("POST /api/v1/accounts/{id}/refresh", s.require("instance:control", http.HandlerFunc(s.refresh)))
 	mux.Handle("POST /api/v1/accounts/{id}/actions/{action}", s.require("instance:control", http.HandlerFunc(s.control)))
 	mux.Handle("GET /api/v1/jobs/{id}", s.require("widget:read", http.HandlerFunc(s.job)))
@@ -594,6 +595,15 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, job)
+}
+
+func (s *Server) refreshAll(w http.ResponseWriter, r *http.Request) {
+	jobs, err := s.engine.EnqueueRefreshAll(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "enqueue_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"jobs": jobs})
 }
 
 func (s *Server) control(w http.ResponseWriter, r *http.Request) {

@@ -68,6 +68,23 @@ func (e *Engine) Enqueue(ctx context.Context, jobType string, accountID int64, p
 	return job, err
 }
 
+func (e *Engine) EnqueueRefreshAll(ctx context.Context) ([]domain.Job, error) {
+	accounts, err := e.store.ListAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	minute := time.Now().UTC().Format("200601021504")
+	jobs := make([]domain.Job, 0, len(accounts))
+	for _, account := range accounts {
+		job, enqueueErr := e.Enqueue(ctx, JobRefreshAccount, account.ID, `{}`, JobUniqueKey(JobRefreshAccount, account.ID, minute))
+		if enqueueErr != nil {
+			return jobs, enqueueErr
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
+}
+
 func (e *Engine) RunOnce(ctx context.Context) error {
 	acquired, err := e.store.AcquireLease(ctx, "monitor", e.owner, 75*time.Second)
 	if err != nil {

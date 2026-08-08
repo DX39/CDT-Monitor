@@ -51,6 +51,7 @@ h3 { letter-spacing: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes stage-in { from { transform: translateY(14px); } }
 @keyframes modal-in { from { transform: translateY(18px) scale(.985); } }
+@keyframes menu-in { from { opacity: 0; transform: translateY(-6px) scale(.985); } }
 @keyframes scrim-in { from { opacity: 0; } }
 @keyframes progress-in { from { transform: scaleX(0); } }
 @keyframes heartbeat-pulse { 50% { box-shadow: 0 0 0 7px rgba(20, 122, 85, 0); } }
@@ -392,9 +393,10 @@ h3 { letter-spacing: 0; }
   .field--wide { grid-column: auto; }
   .setup-actions .button { flex: 1; padding: 0 12px; }
   .app-shell { padding: 14px 16px 60px; }
-  .topbar { position: relative; min-height: 64px; }
+  .topbar { position: relative; z-index: 20; min-height: 64px; }
+  .topbar > .brand-lockup { min-width: 0; }
   .mobile-menu { display: grid; }
-  .topbar-actions { display: none; position: absolute; z-index: 10; right: 0; top: 60px; padding: 10px; border-radius: 14px; background: rgba(255,255,255,.94); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: var(--shadow-lg), 0 0 0 1px var(--line); animation: modal-in .28s var(--ease-emphasis) both; }
+  .topbar-actions { display: none; position: absolute; z-index: 30; top: 60px; right: 0; padding: 10px; border-radius: 14px; background: rgba(255,255,255,.94); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: var(--shadow-lg), 0 0 0 1px var(--line); transform-origin: top right; animation: menu-in .24s var(--ease-out) both; }
   .topbar-actions.open { display: flex; }
   .heartbeat { display: none; }
   .overview-head { min-height: 146px; padding: 24px 2px; align-items: flex-end; }

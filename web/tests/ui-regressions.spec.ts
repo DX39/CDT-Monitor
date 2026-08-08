@@ -80,11 +80,101 @@ test('dashboard remains contained across supported viewport widths', async ({ pa
   ]) {
     await page.setViewportSize(viewport)
     await page.goto('/')
-    await expect(page.getByRole('heading', { name: '资源控制台' })).toBeVisible()
+    const title = page.getByRole('heading', { name: '资源控制台' })
+    await expect(title).toBeVisible()
+    if (viewport.width <= 640) {
+      await page.waitForTimeout(700)
+      const closedTitleBox = await title.boundingBox()
+      const closedOverviewBox = await page.locator('.overview-head').boundingBox()
+      expect(closedTitleBox).not.toBeNull()
+      expect(closedOverviewBox).not.toBeNull()
+      await page.getByRole('button', { name: '菜单' }).click()
+      const actions = page.locator('.topbar-actions.open')
+      const overview = page.locator('.overview-head')
+      await expect(actions).toBeVisible()
+      await page.waitForTimeout(300)
+      const actionsBox = await actions.boundingBox()
+      const titleBox = await title.boundingBox()
+      const overviewBox = await overview.boundingBox()
+      expect(actionsBox).not.toBeNull()
+      expect(titleBox).not.toBeNull()
+      expect(overviewBox).not.toBeNull()
+      expect(Math.abs(titleBox!.y - closedTitleBox!.y)).toBeLessThanOrEqual(1)
+      expect(Math.abs(overviewBox!.y - closedOverviewBox!.y)).toBeLessThanOrEqual(1)
+      expect(actionsBox!.width).toBeGreaterThan(actionsBox!.height * 2)
+      const overlapsTitle = actionsBox!.x < titleBox!.x + titleBox!.width
+        && actionsBox!.x + actionsBox!.width > titleBox!.x
+        && actionsBox!.y < titleBox!.y + titleBox!.height
+        && actionsBox!.y + actionsBox!.height > titleBox!.y
+      const layerState = await page.evaluate(() => {
+        const menu = document.querySelector<HTMLElement>('.topbar-actions.open')
+        const topbar = document.querySelector<HTMLElement>('.topbar')
+        const overview = document.querySelector<HTMLElement>('.overview-head')
+        return {
+          menuZ: Number.parseInt(getComputedStyle(menu!).zIndex, 10) || 0,
+          topbarZ: Number.parseInt(getComputedStyle(topbar!).zIndex, 10) || 0,
+          overviewZ: Number.parseInt(getComputedStyle(overview!).zIndex, 10) || 0,
+        }
+      })
+      expect(layerState.menuZ).toBeGreaterThan(0)
+      expect(layerState.topbarZ).toBeGreaterThan(layerState.overviewZ)
+      if (overlapsTitle) {
+        const overlapCenter = {
+          x: (Math.max(actionsBox!.x, titleBox!.x) + Math.min(actionsBox!.x + actionsBox!.width, titleBox!.x + titleBox!.width)) / 2,
+          y: (Math.max(actionsBox!.y, titleBox!.y) + Math.min(actionsBox!.y + actionsBox!.height, titleBox!.y + titleBox!.height)) / 2,
+        }
+        const menuOwnsOverlap = await page.evaluate(({ x, y }) => Boolean(document.elementFromPoint(x, y)?.closest('.topbar-actions')), overlapCenter)
+        expect(menuOwnsOverlap, `${viewport.width}px title paints above the menu`).toBe(true)
+      }
+      await page.screenshot({ path: testInfo.outputPath(`dashboard-menu-${viewport.width}.png`), fullPage: true })
+      await page.getByRole('button', { name: '菜单' }).click()
+    }
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
     expect(overflow, `${viewport.width}px viewport overflow`).toBeLessThanOrEqual(1)
     await page.screenshot({ path: testInfo.outputPath(`dashboard-${viewport.width}.png`), fullPage: true })
   }
+})
+
+test('top refresh forces every configured instance and reports completion', async ({ page }, testInfo) => {
+  const accounts = [
+    {
+      id: 1, account: 'LTAI5on***', remark: '香港节点', region: 'cn-hongkong', region_name: '中国香港', flow_total: 200, flow_used: 12.5,
+      percentage: 6.25, threshold: 95, over_threshold: false, instance_status: 'Running', last_updated: new Date().toISOString(), stale: false,
+    },
+    {
+      id: 2, account: 'LTAI5tw***', remark: '新加坡节点', region: 'ap-southeast-1', region_name: '新加坡', flow_total: 300, flow_used: 8.25,
+      percentage: 2.75, threshold: 95, over_threshold: false, instance_status: 'Stopped', last_updated: new Date().toISOString(), stale: false,
+    },
+  ]
+  let statusRequests = 0
+  let refreshAllCalls = 0
+  const jobPolls = new Map<string, number>()
+  await page.route('**/api/v1/system/init-status', (route) => route.fulfill({ json: { initialized: true } }))
+  await page.route('**/api/v1/status', (route) => { statusRequests += 1; return route.fulfill({ json: { accounts, system_last_run: new Date().toISOString() } }) })
+  await page.route('**/api/v1/config', (route) => route.fulfill({ json: { ...config, accounts: [config.accounts[0], { ...config.accounts[0], id: 2, access_key_id: 'LTAI5test2', instance_id: 'i-test-2', remark: '新加坡节点', region_id: 'ap-southeast-1', site_type: 'international' }] } }))
+  await page.route('**/api/v1/accounts/refresh', (route) => {
+    refreshAllCalls += 1
+    expect(route.request().method()).toBe('POST')
+    return route.fulfill({ status: 202, json: { jobs: [{ id: 'refresh-1', status: 'pending' }, { id: 'refresh-2', status: 'pending' }] } })
+  })
+  await page.route('**/api/v1/jobs/**', (route) => {
+    const id = route.request().url().split('/').pop() || ''
+    const count = (jobPolls.get(id) || 0) + 1
+    jobPolls.set(id, count)
+    return route.fulfill({ json: { id, status: count > 1 ? 'completed' : 'running' } })
+  })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  await page.getByRole('button', { name: '菜单' }).click()
+  await page.getByRole('button', { name: '强制刷新全部实例' }).click()
+  await expect(page.getByRole('button', { name: '正在强制刷新全部实例' })).toBeDisabled()
+  await expect(page.getByText('已强制刷新 2 个实例')).toBeVisible({ timeout: 10_000 })
+  expect(refreshAllCalls).toBe(1)
+  expect(statusRequests).toBeGreaterThanOrEqual(2)
+  expect(jobPolls.get('refresh-1')).toBeGreaterThanOrEqual(2)
+  expect(jobPolls.get('refresh-2')).toBeGreaterThanOrEqual(2)
+  await page.screenshot({ path: testInfo.outputPath('dashboard-refresh-all-mobile.png'), fullPage: true })
 })
 
 test('dashboard billing, history precision and settings remain usable', async ({ page }, testInfo) => {
@@ -263,6 +353,7 @@ test('dashboard billing, history precision and settings remain usable', async ({
   expect(overflow).toBeLessThanOrEqual(1)
   await page.screenshot({ path: testInfo.outputPath('settings-api-key-mobile.png'), fullPage: true })
   await panel.getByRole('button', { name: '关闭' }).click()
+  await page.getByRole('button', { name: '菜单' }).click()
   await page.getByRole('button', { name: '管理员' }).click()
   await expect(page.getByRole('heading', { name: '管理员设置' })).toBeVisible()
   await expect(page.getByRole('button', { name: '创建 Passkey' })).toBeDisabled()

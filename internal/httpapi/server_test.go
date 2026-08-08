@@ -3,12 +3,15 @@ package httpapi
 import (
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/wang4386/CDT-Monitor/internal/domain"
+	"github.com/wang4386/CDT-Monitor/internal/engine"
 	"github.com/wang4386/CDT-Monitor/internal/store"
 )
 
@@ -82,5 +85,44 @@ func TestBeginPasskeyLoginRejectsEmptyCredentialList(t *testing.T) {
 	server.beginPasskeyLogin(response, request)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRefreshAllEnqueuesEveryConfiguredAccount(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	config := domain.Config{
+		AdminPassword: "Strong-Password-42!", TrafficThreshold: 95, ShutdownMode: "KeepCharging", ThresholdAction: "stop_and_notify", APIInterval: 600, Timezone: "Asia/Shanghai",
+		Accounts: []domain.Account{
+			{AccessKeyID: "LTAItest-one", AccessKeySecret: "secret-one", RegionID: "cn-hongkong", InstanceID: "i-one", MaxTraffic: 200, SiteType: "china"},
+			{AccessKeyID: "LTAItest-two", AccessKeySecret: "secret-two", RegionID: "ap-southeast-1", InstanceID: "i-two", MaxTraffic: 300, SiteType: "international"},
+		},
+	}
+	if err = st.Setup(t.Context(), config); err != nil {
+		t.Fatal(err)
+	}
+	eng := engine.New(st, nil, nil, slog.Default(), 1)
+	server := &Server{store: st, engine: eng}
+	request := httptest.NewRequest(http.MethodPost, "http://monitor.example.com/api/v1/accounts/refresh", strings.NewReader(`{}`))
+	response := httptest.NewRecorder()
+	server.refreshAll(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Jobs []domain.Job `json:"jobs"`
+	}
+	if err = json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Jobs) != 2 {
+		t.Fatalf("jobs = %#v", payload.Jobs)
+	}
+	if payload.Jobs[0].Type != engine.JobRefreshAccount || payload.Jobs[1].Type != engine.JobRefreshAccount || payload.Jobs[0].AccountID == payload.Jobs[1].AccountID {
+		t.Fatalf("unexpected refresh jobs: %#v", payload.Jobs)
 	}
 }

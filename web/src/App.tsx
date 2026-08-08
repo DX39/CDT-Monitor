@@ -61,9 +61,9 @@ export default function App() {
     setPhase('dashboard')
   }, [])
 
-  const refreshStatus = useCallback(async () => {
+  const refreshStatus = useCallback(async (fresh = false) => {
     try {
-      setStatus(await api<StatusResponse>('/api/v1/status'))
+      setStatus(await api<StatusResponse>('/api/v1/status', fresh ? { cache: 'no-store' } : {}))
     } catch (error) {
       if (error instanceof APIError && error.status === 401) setPhase('login')
     }
@@ -117,7 +117,7 @@ export default function App() {
         <SettingsPanel
           initial={config}
           onClose={() => setSettingsOpen(false)}
-          onSaved={(next) => { setConfig(next); setSettingsOpen(false); void refreshStatus() }}
+          onSaved={(next) => { setConfig(next); setSettingsOpen(false); void refreshStatus(true) }}
           notify={notify}
         />
       )}
@@ -267,10 +267,11 @@ function Login({ onComplete }: { onComplete: () => Promise<void> }) {
 }
 
 function Dashboard({ status, config, onRefresh, onSettings, onAdmin, onHistory, notify, onLogout }: {
-  status: StatusResponse; config: Config; onRefresh: () => Promise<void>; onSettings: () => void; onAdmin: () => void; onHistory: (account: AccountSummary) => void; notify: (message: string, tone?: Toast['tone']) => void; onLogout: () => void
+  status: StatusResponse; config: Config; onRefresh: (fresh?: boolean) => Promise<void>; onSettings: () => void; onAdmin: () => void; onHistory: (account: AccountSummary) => void; notify: (message: string, tone?: Toast['tone']) => void; onLogout: () => void
 }) {
   const [busy, setBusy] = useState<Record<number, string>>({})
   const [mobileMenu, setMobileMenu] = useState(false)
+  const [refreshingAll, setRefreshingAll] = useState(false)
   const running = status.accounts.filter((account) => account.instance_status === 'Running').length
   const warning = status.accounts.filter((account) => account.over_threshold).length
   const used = status.accounts.reduce((sum, account) => sum + account.flow_used, 0)
@@ -283,7 +284,7 @@ function Dashboard({ status, config, onRefresh, onSettings, onAdmin, onHistory, 
       const path = action === 'refresh' ? `/api/v1/accounts/${account.id}/refresh` : `/api/v1/accounts/${account.id}/actions/${action}`
       const job = await api<Job>(path, { method: 'POST', body: '{}' })
       await waitForJob(job.id)
-      await onRefresh()
+      await onRefresh(true)
       notify(action === 'refresh' ? '实例状态已刷新' : `已发送${action === 'start' ? '开机' : '关机'}指令`, 'success')
     } catch (error) { notify(error instanceof Error ? error.message : '操作失败', 'error') }
     finally { setBusy((value) => { const next = { ...value }; delete next[account.id]; return next }) }
@@ -292,19 +293,45 @@ function Dashboard({ status, config, onRefresh, onSettings, onAdmin, onHistory, 
     await api('/api/v1/auth/logout', { method: 'POST', body: '{}' }).catch(() => undefined)
     onLogout()
   }
+  const refreshAll = async () => {
+    if (refreshingAll) return
+    setRefreshingAll(true)
+    try {
+      const result = await api<{ jobs?: Job[] }>('/api/v1/accounts/refresh', { method: 'POST', body: '{}' })
+      const jobs = Array.isArray(result.jobs) ? result.jobs : []
+      if (jobs.length === 0) {
+        await onRefresh(true)
+        notify('暂无可刷新的实例', 'info')
+        return
+      }
+      const outcomes = await Promise.allSettled(jobs.map((job) => waitForJob(job.id)))
+      await onRefresh(true)
+      const succeeded = outcomes.filter((outcome) => outcome.status === 'fulfilled').length
+      if (succeeded === jobs.length) notify(`已强制刷新 ${succeeded} 个实例`, 'success')
+      else if (succeeded > 0) notify(`已刷新 ${succeeded}/${jobs.length} 个实例，其余实例刷新失败`, 'error')
+      else notify('全部实例刷新失败，请查看运行日志', 'error')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : '全部实例刷新失败', 'error')
+    } finally {
+      setRefreshingAll(false)
+    }
+  }
+  const openSettings = () => { setMobileMenu(false); onSettings() }
+  const openAdmin = () => { setMobileMenu(false); onAdmin() }
+  const leave = () => { setMobileMenu(false); void logout() }
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-lockup"><BrandMark /><div><b>CDT MONITOR</b><span>CONTROL PLANE</span></div></div>
-        <div className={`topbar-actions ${mobileMenu ? 'open' : ''}`}>
+        <div id="dashboard-actions" className={`topbar-actions ${mobileMenu ? 'open' : ''}`} aria-busy={refreshingAll}>
           <div className={`heartbeat ${heartbeatAge > 180 ? 'heartbeat--warn' : ''}`}><i />{heartbeatAge > 180 ? '监控任务延迟' : '自动化运行中'}</div>
-          <IconButton label="刷新" onClick={() => void onRefresh()}><RefreshCw size={18} /></IconButton>
-          <IconButton label="设置" onClick={onSettings}><Settings size={18} /></IconButton>
-          <IconButton label="管理员" title="管理员设置" onClick={onAdmin}><UserCog size={18} /></IconButton>
-          <IconButton label="退出" onClick={() => void logout()}><LogOut size={18} /></IconButton>
+          <IconButton label={refreshingAll ? '正在强制刷新全部实例' : '强制刷新全部实例'} disabled={refreshingAll} onClick={() => void refreshAll()}>{refreshingAll ? <LoaderCircle className="spin" size={18} /> : <RefreshCw size={18} />}</IconButton>
+          <IconButton label="设置" onClick={openSettings}><Settings size={18} /></IconButton>
+          <IconButton label="管理员" title="管理员设置" onClick={openAdmin}><UserCog size={18} /></IconButton>
+          <IconButton label="退出" onClick={leave}><LogOut size={18} /></IconButton>
         </div>
-        <IconButton label="菜单" className="mobile-menu" onClick={() => setMobileMenu(!mobileMenu)}>{mobileMenu ? <X /> : <Menu />}</IconButton>
+        <IconButton label="菜单" className="mobile-menu" ariaExpanded={mobileMenu} ariaControls="dashboard-actions" onClick={() => setMobileMenu(!mobileMenu)}>{mobileMenu ? <X /> : <Menu />}</IconButton>
       </header>
 
       <section className="overview-head"><div><p className="eyebrow">LIVE INFRASTRUCTURE</p><h1>资源控制台</h1><p className="muted">{new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}</p></div><div className="overview-time"><Clock3 size={17} /><span>上次任务</span><b>{status.system_last_run ? formatTime(status.system_last_run) : '尚未运行'}</b></div></section>
@@ -320,7 +347,7 @@ function Dashboard({ status, config, onRefresh, onSettings, onAdmin, onHistory, 
         <button className="empty-state" onClick={onSettings}><Cloud /><h3>添加第一个云端实例</h3><p>进入设置完成 AccessKey 与实例信息配置</p><span>打开设置<ChevronRight size={16} /></span></button>
       ) : (
         <section className="account-grid">
-          {status.accounts.map((account) => <AccountCard key={account.id} account={account} busy={busy[account.id]} keepAlive={config.keep_alive} billingEnabled={config.enable_billing} onAction={(action) => void runAction(account, action)} onHistory={() => onHistory(account)} />)}
+          {status.accounts.map((account) => <AccountCard key={account.id} account={account} busy={refreshingAll ? 'refresh' : busy[account.id]} keepAlive={config.keep_alive} billingEnabled={config.enable_billing} onAction={(action) => void runAction(account, action)} onHistory={() => onHistory(account)} />)}
         </section>
       )}
     </main>
@@ -728,7 +755,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function PasswordField({ label, value, visible, onVisible, onChange, autoComplete }: { label: string; value: string; visible: boolean; onVisible: () => void; onChange: (value: string) => void; autoComplete: string }) { return <Field label={label}><LockKeyhole size={17} /><input type={visible ? 'text' : 'password'} value={value} onChange={(event) => onChange(event.target.value)} autoComplete={autoComplete} /><button type="button" className="input-action" onClick={onVisible} aria-label={visible ? '隐藏密码' : '显示密码'}>{visible ? <EyeOff /> : <Eye />}</button></Field> }
 function Segmented({ value, options, onChange }: { value: string; options: readonly (readonly [string, string])[]; onChange: (value: string) => void }) { return <div className="segmented">{options.map(([key, label]) => <button type="button" className={value === key ? 'active' : ''} key={key} onClick={() => onChange(key)}>{label}</button>)}</div> }
 function ToggleRow({ title, icon, checked, onChange }: { title: string; icon: React.ReactNode; checked: boolean; onChange: (checked: boolean) => void }) { return <label className="toggle-row"><span>{icon}</span><b>{title}</b><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} /><i className="toggle"><em /></i></label> }
-function IconButton({ label, title, children, onClick, disabled, tone = 'default', className = '' }: { label: string; title?: string; children: React.ReactNode; onClick: () => void; disabled?: boolean; tone?: string; className?: string }) { return <button className={`icon-button icon-button--${tone} ${className}`} aria-label={label} title={title || label} onClick={onClick} disabled={disabled}>{children}</button> }
+function IconButton({ label, title, children, onClick, disabled, tone = 'default', className = '', ariaExpanded, ariaControls }: { label: string; title?: string; children: React.ReactNode; onClick: () => void; disabled?: boolean; tone?: string; className?: string; ariaExpanded?: boolean; ariaControls?: string }) { return <button className={`icon-button icon-button--${tone} ${className}`} aria-label={label} aria-expanded={ariaExpanded} aria-controls={ariaControls} title={title || label} onClick={onClick} disabled={disabled}>{children}</button> }
 function ToastStack({ items }: { items: Toast[] }) { return <div className="toast-stack" aria-live="polite">{items.map((toast) => <div className={`toast toast--${toast.tone}`} key={toast.id}>{toast.tone === 'success' ? <Check /> : toast.tone === 'error' ? <AlertTriangle /> : <Activity />}{toast.message}</div>)}</div> }
 
 function statusClass(status: string) { if (status === 'Running') return 'positive'; if (status === 'Stopped') return 'negative'; if (status === 'Starting' || status === 'Stopping' || status === 'Pending') return 'warning'; return 'neutral' }
