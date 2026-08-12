@@ -1,9 +1,7 @@
-# CDT Monitor v2 · Dev
+# CDT Monitor
 
-CDT Monitor 是一个用于阿里云 CDT 流量监控、ECS 实例自动化控制和费用观察的单机控制台。本 `dev` 分支正在把原 PHP 版本重构为一个可直接运行的 Go 程序：HTTP 服务、定时调度器、并发 Worker、SQLite、API 和前端静态资源全部集成在同一个进程中。
+CDT Monitor 是一个用于阿里云 CDT 流量监控、ECS 实例自动化控制和费用观察的轻量级单机控制台。HTTP 服务、定时调度器、并发 Worker、SQLite、API 和前端静态资源全部集成在一个 Go 进程中，适合通过 Docker 或独立二进制快速部署。
 
-> 当前分支：`dev`
->
 > 目标平台：Linux / Windows / macOS，amd64 / arm64
 > 数据库：SQLite WAL，不需要 MySQL 或 Redis
 
@@ -50,7 +48,7 @@ Go HTTP API ──► SQLite WAL 状态快照
 ```yaml
 services:
   cdt-monitor:
-    image: ghcr.io/wang4386/cdt-monitor:dev
+    image: ghcr.io/wang4386/cdt-monitor:latest
     container_name: cdt-monitor
     restart: unless-stopped
     init: true
@@ -85,7 +83,13 @@ docker run -d \
   --restart unless-stopped \
   -p 43210:8080 \
   -v cdt-data:/data \
-  ghcr.io/wang4386/cdt-monitor:dev
+  ghcr.io/wang4386/cdt-monitor:latest
+```
+
+Docker Hub 用户也可以使用：
+
+```text
+wang4386/cdt-monitor:latest
 ```
 
 运行镜像使用非 root 用户和 `scratch` 基础层，不包含 Nginx、PHP-FPM、Cron、shell 或包管理器。HTTPS 请求所需的 CA 证书会单独复制进镜像。
@@ -186,7 +190,7 @@ GET /monitor.php?key=<具有 cron:run scope 的 API Key>
 
 ### Android 桌面小组件
 
-仓库中的 [`android-widget`](android-widget/README.md) 是 `/api/v1/widget/summary` 的原生 Android 客户端。安装后可配置站点地址和具有 `widget:read` scope 的 API Key；从系统小组件选择器添加时，再选择具体实例。配置签名密钥后，可手动运行 GitHub Actions 构建通用 APK、常见 ABI 分包和 AAB。
+仓库中的 [`android-widget`](android-widget/README.md) 是基于 `/api/v1/widget/summary` 的 Android 小组件原型，源码暂时随主项目保存，供后续研究和完善。当前不作为正式稳定客户端发布。
 
 ## 相关链接
 
@@ -221,16 +225,16 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o cdt-monitor ./cmd/cdt-monit
 | Workflow | 触发条件 | 输出 |
 | --- | --- | --- |
 | `CI` | `dev`/`main` push、PR | 前端构建、Go race test、vet、Linux build |
-| `Automatic Release` | `main` push 或手动 | 自动计算 patch 版本并创建 tag |
-| `Release Binaries` | `v*.*.*` tag | Linux/Windows/macOS 的 amd64/arm64 压缩包和 GitHub Release |
-| `Container Image` | `dev`/`main`/tag | GHCR 的 linux/amd64 + linux/arm64 manifest |
-| `Android Widget` | 仅手动触发 | 通用/常见 ABI APK 与 AAB artifact |
+| `Automatic Release` | `main` push 或手动 | 自动计算 patch 版本、创建 tag 并调用正式发布流程 |
+| `Release Binaries` | 自动发布、`v*.*.*` tag 或手动 | Linux/Windows/macOS 二进制、SHA-256 校验和及 GitHub Release |
+| `Container Images` | `dev`/`main`/tag | 同时发布 GHCR 与 Docker Hub 的 linux/amd64、linux/arm64 镜像 |
+| `Android Widget` | 仅手动触发 | Android 原型 APK/AAB workflow artifact |
 
 镜像标签：
 
-- `dev` 分支：`ghcr.io/wang4386/cdt-monitor:dev`
-- `main` 分支：`ghcr.io/wang4386/cdt-monitor:latest`
-- Release：`ghcr.io/wang4386/cdt-monitor:v2.x.x`
+- `dev` 分支：`ghcr.io/wang4386/cdt-monitor:dev`、`wang4386/cdt-monitor:dev`
+- `main` 分支：`ghcr.io/wang4386/cdt-monitor:latest`、`wang4386/cdt-monitor:latest`
+- Release：两个仓库均发布 `v2.x.x`、`2.x.x` 与 `2.x` 标签
 
 ## 安全建议
 

@@ -6,7 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to publish'
+        description: Existing tag to publish
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing tag to publish
         required: true
         type: string
 
@@ -14,8 +20,29 @@ permissions:
   contents: write
 
 jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build frontend
+        working-directory: web
+        run: npm ci --ignore-scripts && npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: embedded-web
+          path: internal/web/dist
+          if-no-files-found: error
+
   build:
-    name: ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: frontend
+    name: ${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('-v{0}', matrix.goarm) || '' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -23,6 +50,7 @@ jobs:
         include:
           - { goos: linux, goarch: amd64 }
           - { goos: linux, goarch: arm64 }
+          - { goos: linux, goarch: arm, goarm: '7' }
           - { goos: windows, goarch: amd64 }
           - { goos: windows, goarch: arm64 }
           - { goos: darwin, goarch: amd64 }
@@ -35,28 +63,30 @@ jobs:
         with:
           go-version: '1.24.x'
           cache: true
-      - uses: actions/setup-node@v4
+      - uses: actions/download-artifact@v4
         with:
-          node-version: '22.x'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Build frontend
-        working-directory: web
-        run: npm ci --ignore-scripts && npm run build
+          name: embedded-web
+          path: internal/web/dist
       - name: Build binary and archive
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
           VERSION: ${{ inputs.tag || github.ref_name }}
           COMMIT: ${{ github.sha }}
+          BUILT_AT: ${{ github.run_id }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release
           ext=""
+          arch="$GOARCH"
+          if [ -n "${GOARM:-}" ]; then arch="${GOARCH}v${GOARM}"; fi
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          name="cdt-monitor_${VERSION}_${GOOS}_${GOARCH}"
-          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o "release/${name}${ext}" ./cmd/cdt-monitor
+          name="cdt-monitor_${VERSION}_${GOOS}_${arch}"
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.builtAt=github-run-${BUILT_AT}" \
+            -o "release/${name}${ext}" ./cmd/cdt-monitor
           if [ "$GOOS" = "windows" ]; then
             (cd release && zip "${name}.zip" "${name}${ext}")
           else
@@ -65,8 +95,9 @@ jobs:
           rm "release/${name}${ext}"
       - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}-${{ matrix.goarm || 'default' }}
           path: release/*
+          if-no-files-found: error
 
   publish:
     needs: build
@@ -77,6 +108,9 @@ jobs:
           path: release
           pattern: release-*
           merge-multiple: true
+      - name: Generate checksums
+        working-directory: release
+        run: sha256sum * > SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
