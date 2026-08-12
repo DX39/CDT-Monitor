@@ -89,7 +89,7 @@ docker run -d \
 Docker Hub 用户也可以使用：
 
 ```text
-wang4386/cdt-monitor:latest
+qninq/cdt-monitor:latest
 ```
 
 运行镜像使用非 root 用户和 `scratch` 基础层，不包含 Nginx、PHP-FPM、Cron、shell 或包管理器。HTTPS 请求所需的 CA 证书会单独复制进镜像。
@@ -232,8 +232,8 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o cdt-monitor ./cmd/cdt-monit
 
 镜像标签：
 
-- `dev` 分支：`ghcr.io/wang4386/cdt-monitor:dev`、`wang4386/cdt-monitor:dev`
-- `main` 分支：`ghcr.io/wang4386/cdt-monitor:latest`、`wang4386/cdt-monitor:latest`
+- `dev` 分支：`ghcr.io/wang4386/cdt-monitor:dev`、`qninq/cdt-monitor:dev`
+- `main` 分支：`ghcr.io/wang4386/cdt-monitor:latest`、`qninq/cdt-monitor:latest`
 - Release：两个仓库均发布 `v2.x.x`、`2.x.x` 与 `2.x` 标签
 
 ## 安全建议
