@@ -205,10 +205,19 @@ test('dashboard billing, history precision and settings remain usable', async ({
     hourly: [{ at: new Date().toISOString(), traffic: 1.23456 }],
     daily: [{ at: new Date().toISOString(), traffic: 9.87654 }],
   } }))
-  await page.route('**/api/v1/api-keys', (route) => route.fulfill({ json: {
-    keys: [{ id: 1, name: '旧版 Key', scopes: null, created_at: new Date().toISOString() }],
-  } }))
-  await page.route('**/api/v1/system/info**', (route) => route.fulfill({ json: { version: '2.0.0-dev', commit: 'test', built_at: new Date().toISOString(), repository: 'https://github.com/wang4386/CDT-Monitor', release_url: 'https://github.com/wang4386/CDT-Monitor/releases', latest_version: '2.0.0-dev' } }))
+  const longToken = 'cdt_' + 'A1b2C3d4'.repeat(12)
+  await page.route('**/api/v1/api-keys', (route) => {
+    if (route.request().method() === 'POST') {
+      return route.fulfill({ status: 201, json: { token: longToken } })
+    }
+    return route.fulfill({ json: {
+      keys: [
+        { id: 1, name: '旧版 Key', scopes: null, created_at: new Date().toISOString() },
+        { id: 2, name: '已撤销 Key', scopes: ['widget:read'], created_at: new Date().toISOString(), revoked_at: new Date().toISOString() },
+      ],
+    } })
+  })
+  await page.route('**/api/v1/system/info**', (route) => route.fulfill({ json: { version: 'v2.0.1', commit: 'test', built_at: new Date().toISOString(), repository: 'https://github.com/wang4386/CDT-Monitor', release_url: 'https://github.com/wang4386/CDT-Monitor/releases', latest_version: 'v2.0.1' } }))
   await page.route('**/api/v1/admin/passkeys', (route) => route.fulfill({ json: { passkeys: [] } }))
   let logsCleared = false
   await page.route('**/api/v1/logs**', (route) => {
@@ -301,6 +310,7 @@ test('dashboard billing, history precision and settings remain usable', async ({
     await page.locator('.chart-modal').getByRole('button', { name: '关闭' }).click()
   }
 
+  await page.setViewportSize({ width: 320, height: 720 })
   await page.getByRole('button', { name: '菜单' }).click()
   await page.getByRole('button', { name: '设置' }).click()
   const panel = page.locator('.settings-panel')
@@ -337,9 +347,26 @@ test('dashboard billing, history precision and settings remain usable', async ({
   await page.getByRole('button', { name: 'API Key' }).click()
   await expect(page.getByRole('heading', { name: 'API Key' })).toBeVisible()
   await expect(page.getByText('旧版 Key')).toBeVisible()
+  await expect(page.getByText('已撤销 Key')).toHaveCount(0)
   await expect(page.getByText('未配置权限')).toBeVisible()
+  await page.getByRole('button', { name: '创建 Key' }).click()
+  await expect(page.getByText('仅显示一次')).toBeVisible()
+  await expect(page.locator('.token-reveal code')).toHaveText(longToken)
+  const tokenOverflow = await page.locator('.token-reveal').evaluate((element) => element.scrollWidth - element.clientWidth)
+  expect(tokenOverflow).toBeLessThanOrEqual(1)
+  await page.screenshot({ path: testInfo.outputPath('settings-api-key-mobile.png'), fullPage: true })
   await page.getByRole('button', { name: '关于' }).click()
   await expect(page.getByRole('heading', { name: '关于 CDT Monitor' })).toBeVisible()
+  await expect(page.locator('.about-version b')).toHaveText('v2.0.1')
+  const updateButton = page.getByRole('button', { name: '检查更新' })
+  await expect(updateButton).toBeVisible()
+  const updateButtonStyle = await updateButton.evaluate((element) => ({
+    whiteSpace: getComputedStyle(element).whiteSpace,
+    width: element.getBoundingClientRect().width,
+    height: element.getBoundingClientRect().height,
+  }))
+  expect(updateButtonStyle.whiteSpace).toBe('nowrap')
+  expect(updateButtonStyle.width).toBeGreaterThan(updateButtonStyle.height * 2)
   await expect(page.getByRole('link', { name: /NodeSeek/ })).toBeVisible()
   const faviconSources = await page.locator('.about-link__favicon img').evaluateAll((images) => images.map((image) => image.getAttribute('src')))
   expect(faviconSources).toEqual([
@@ -351,7 +378,7 @@ test('dashboard billing, history precision and settings remain usable', async ({
   await expect.poll(() => page.locator('.about-link__favicon').evaluateAll((items) => items.every((item) => item.getAttribute('data-state') !== 'loading'))).toBe(true)
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
   expect(overflow).toBeLessThanOrEqual(1)
-  await page.screenshot({ path: testInfo.outputPath('settings-api-key-mobile.png'), fullPage: true })
+  await page.screenshot({ path: testInfo.outputPath('settings-about-mobile.png'), fullPage: true })
   await panel.getByRole('button', { name: '关闭' }).click()
   await page.getByRole('button', { name: '菜单' }).click()
   await page.getByRole('button', { name: '管理员' }).click()

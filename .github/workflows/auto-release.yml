@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   tag:
@@ -59,4 +60,12 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.tag.outputs.version }}
+    secrets: inherit
+
+  container:
+    needs: tag
+    uses: ./.github/workflows/docker-build-push.yml
+    with:
+      version: ${{ needs.tag.outputs.version }}
+      ref: ${{ needs.tag.outputs.version }}
     secrets: inherit

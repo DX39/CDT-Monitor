@@ -345,6 +345,8 @@ h3 { letter-spacing: 0; }
 .passkey-row span { margin-top: 4px; color: #8e8e93; font-size: 9px; }
 .about-section { max-width: 940px; }
 .about-version { min-height: 88px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 4px 2px 20px; border-bottom: 1px solid var(--line); }
+.about-version > div { min-width: 0; }
+.about-version .button { flex: 0 0 auto; white-space: nowrap; }
 .about-version span, .about-version small { display: block; color: #8e8e93; font-size: 10px; }
 .about-version b { display: block; margin: 5px 0; font-size: 22px; }
 .about-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
@@ -435,6 +437,8 @@ h3 { letter-spacing: 0; }
   .passkey-create { grid-template-columns: 1fr; }
   .passkey-create .button { width: 100%; }
   .about-links { grid-template-columns: 1fr; }
+  .about-version { align-items: flex-start; flex-direction: column; gap: 14px; }
+  .about-version .button { width: 100%; justify-content: center; }
   .chart-modal { width: 100%; height: calc(100dvh - 24px); max-height: calc(100dvh - 24px); border-radius: 20px; }
   .chart-modal > .segmented { width: 210px; margin: 0 18px 10px; }
   .chart-area { min-height: 280px; padding: 8px 8px 4px 4px; }
