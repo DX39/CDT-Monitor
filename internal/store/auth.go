@@ -100,7 +100,7 @@ func (s *Store) CreateAPIKey(ctx context.Context, name string, scopes []string, 
 }
 
 func (s *Store) ListAPIKeys(ctx context.Context) ([]domain.APIKey, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,scopes,created_at,last_used_at,expires_at,revoked_at FROM api_keys ORDER BY id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,scopes,created_at,last_used_at,expires_at,revoked_at FROM api_keys WHERE revoked_at IS NULL ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}

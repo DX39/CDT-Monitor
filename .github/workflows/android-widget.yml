@@ -49,7 +49,7 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_VERSION_CODE: ${{ github.run_number }}
-          ANDROID_VERSION_NAME: 1.0.${{ github.run_number }}
+          ANDROID_VERSION_NAME: 1.0.1
         run: gradle assembleDebug assembleRelease bundleRelease --no-daemon --stacktrace
 
       - name: Upload Android packages

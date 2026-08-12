@@ -10,8 +10,8 @@ android {
         applicationId = "com.wang4386.cdtmonitor.widget"
         minSdk = 24
         targetSdk = 35
-        versionCode = System.getenv("ANDROID_VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = System.getenv("ANDROID_VERSION_NAME") ?: "1.0.0"
+        versionCode = System.getenv("ANDROID_VERSION_CODE")?.toIntOrNull() ?: 2
+        versionName = System.getenv("ANDROID_VERSION_NAME") ?: "1.0.1"
     }
 
     val releaseKeystore = System.getenv("ANDROID_KEYSTORE_FILE")

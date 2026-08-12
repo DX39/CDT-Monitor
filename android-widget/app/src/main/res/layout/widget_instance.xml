@@ -27,6 +27,8 @@
             android:id="@+id/widget_status"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:background="@drawable/widget_status_pill"
+            android:gravity="center"
             android:text="未知"
             android:textColor="@color/cdt_muted"
             android:textSize="12sp" />
@@ -47,12 +49,13 @@
         android:id="@+id/widget_progress"
         style="@android:style/Widget.ProgressBar.Horizontal"
         android:layout_width="match_parent"
-        android:layout_height="8dp"
+        android:layout_height="6dp"
         android:layout_marginTop="8dp"
         android:max="100"
         android:progress="0"
         android:progressTint="@color/cdt_blue"
-        android:secondaryProgressTint="@color/cdt_border" />
+        android:progressBackgroundTint="@color/cdt_track"
+        android:secondaryProgressTint="@color/cdt_track" />
 
     <TextView
         android:id="@+id/widget_updated"

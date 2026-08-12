@@ -102,6 +102,13 @@ func TestAPIKeyScopesAndRevocation(t *testing.T) {
 	if _, err = st.ValidateAPIKey(ctx, token); err == nil {
 		t.Fatal("revoked key must fail")
 	}
+	keys, err := st.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("revoked key should not be listed as active: %#v", keys)
+	}
 }
 
 func TestListAPIKeysReturnsEmptyArrayWhenNoneExist(t *testing.T) {

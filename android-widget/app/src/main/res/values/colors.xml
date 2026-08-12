@@ -6,6 +6,10 @@
     <color name="cdt_green">#188A55</color>
     <color name="cdt_orange">#B56600</color>
     <color name="cdt_red">#B42318</color>
-    <color name="cdt_surface">#F8FAFC</color>
-    <color name="cdt_border">#D9E1EA</color>
+    <color name="cdt_surface">#F4F7FB</color>
+    <color name="cdt_surface_elevated">#FFFFFF</color>
+    <color name="cdt_glass_fill">#DFFFFFFF</color>
+    <color name="cdt_glass_stroke">#A8FFFFFF</color>
+    <color name="cdt_border">#D5DEE9</color>
+    <color name="cdt_track">#DCE5F0</color>
 </resources>
