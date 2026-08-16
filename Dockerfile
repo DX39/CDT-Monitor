@@ -1,15 +1,18 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22-alpine AS frontend
+FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY web ./
 RUN npm run build
 
-FROM golang:1.24-alpine AS builder
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
+# TARGETOS and TARGETARCH are injected by BuildKit for each requested target.
+# Do not provide defaults here: a default would make every architecture build
+# use amd64 and can produce an arm64 image containing an amd64 binary.
+ARG TARGETOS
+ARG TARGETARCH
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILT_AT=unknown
@@ -23,7 +26,7 @@ RUN mkdir -p /runtime-data && \
       -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.builtAt=${BUILT_AT}" \
       -o /cdt-monitor ./cmd/cdt-monitor
 
-FROM alpine:3.21 AS certificates
+FROM --platform=$BUILDPLATFORM alpine:3.21 AS certificates
 RUN apk add --no-cache ca-certificates
 
 FROM scratch
