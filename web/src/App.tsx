@@ -8,7 +8,7 @@ import {
   Mail, Menu, Play, Plus, Power, RefreshCw, Save, Search, Server, Settings, ShieldCheck,
   Trash2, UserCog, Webhook, X, Zap,
 } from 'lucide-react'
-import { APIError, api, waitForJob } from './api'
+import { APIError, api, fetchLatestReleaseFromGitHub, waitForJob } from './api'
 import {
   APIKeyRecord, Account, AccountSummary, Config, History, Job, LogEntry, PasskeyRecord,
   StatusResponse, SystemInfo, defaultConfig, emptyAccount,
@@ -640,9 +640,37 @@ function AboutSettings({ notify }: { notify: (message: string, tone?: Toast['ton
   useEffect(() => { void api<SystemInfo>('/api/v1/system/info').then(setInfo).catch((cause) => notify(cause instanceof Error ? cause.message : '版本信息加载失败', 'error')) }, [notify])
   const checkVersion = async () => {
     setChecking(true)
-    try { const next = await api<SystemInfo>('/api/v1/system/info?check=1'); setInfo(next); notify(next.check_error || '版本检查完成', next.check_error ? 'error' : 'success') }
-    catch (cause) { notify(cause instanceof Error ? cause.message : '版本检查失败', 'error') }
-    finally { setChecking(false) }
+    try {
+      let baseInfo: SystemInfo | null = null
+      let failureMessage = '版本检查失败'
+      try {
+        const next = await api<SystemInfo>('/api/v1/system/info?check=1')
+        baseInfo = next
+        if (!next.check_error) {
+          setInfo(next)
+          notify('版本检查完成', 'success')
+          return
+        }
+        failureMessage = next.check_error
+      } catch (cause) {
+        failureMessage = cause instanceof Error ? cause.message : '版本检查失败'
+        baseInfo = info
+      }
+      if (!baseInfo) {
+        notify(failureMessage, 'error')
+        return
+      }
+      try {
+        const latest = await fetchLatestReleaseFromGitHub()
+        setInfo({ ...baseInfo, latest_version: latest, check_error: undefined })
+        notify('已通过浏览器网络检查版本', 'success')
+      } catch {
+        setInfo(baseInfo)
+        notify(failureMessage, 'error')
+      }
+    } finally {
+      setChecking(false)
+    }
   }
   return <div className="settings-section about-section"><SectionTitle icon={<Info />} title="关于 CDT Monitor" subtitle="PROJECT INFORMATION" /><div className="about-version"><div><span>当前版本</span><b>{info?.version || '加载中...'}</b><small>{info?.commit && info.commit !== 'unknown' ? `${info.commit} · ${info.built_at}` : '构建信息未知'}</small></div><button className="button button--secondary button--small" onClick={() => void checkVersion()} disabled={checking}>{checking ? <LoaderCircle className="spin" /> : <RefreshCw />}检查更新</button></div>{info?.latest_version && <p className="inline-hint">GitHub 最新版本：{info.latest_version}{info.latest_version === info.version ? '，当前已是最新版本' : '，请查看发布页获取更新'}</p>}<div className="about-links"><a href="https://github.com/wang4386/CDT-Monitor" target="_blank" rel="noreferrer"><SiteFavicon domain="github.com" label="GitHub" /><span><b>GitHub 仓库</b><small>源代码、Issue 与 Release</small></span><ExternalLink /></a><a href="https://qninq.cn" target="_blank" rel="noreferrer"><SiteFavicon domain="qninq.cn" label="qninq.cn" /><span><b>作者博客</b><small>qninq.cn</small></span><ExternalLink /></a><a href="https://www.nodeseek.com/" target="_blank" rel="noreferrer"><SiteFavicon domain="nodeseek.com" label="NodeSeek" /><span><b>NodeSeek</b><small>社区交流</small></span><ExternalLink /></a><a href="https://linux.do/" target="_blank" rel="noreferrer"><SiteFavicon domain="linux.do" label="linux.do" /><span><b>Linux.do</b><small>技术社区交流</small></span><ExternalLink /></a></div></div>
 }

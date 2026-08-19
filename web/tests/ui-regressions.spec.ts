@@ -177,6 +177,26 @@ test('top refresh forces every configured instance and reports completion', asyn
   await page.screenshot({ path: testInfo.outputPath('dashboard-refresh-all-mobile.png'), fullPage: true })
 })
 
+test('about update check falls back to the browser GitHub request', async ({ page }) => {
+  await page.route('**/api/v1/system/init-status', (route) => route.fulfill({ json: { initialized: true } }))
+  await page.route('**/api/v1/status', (route) => route.fulfill({ json: { accounts: [], system_last_run: new Date().toISOString() } }))
+  await page.route('**/api/v1/config', (route) => route.fulfill({ json: config }))
+  await page.route('**/api/v1/system/info**', (route) => {
+    const check = new URL(route.request().url()).searchParams.get('check') === '1'
+    return route.fulfill({ json: check
+      ? { version: 'v2.0.2', commit: 'test', built_at: new Date().toISOString(), repository: 'https://github.com/wang4386/CDT-Monitor', release_url: 'https://github.com/wang4386/CDT-Monitor/releases', check_error: '暂时无法检查 GitHub Release' }
+      : { version: 'v2.0.2', commit: 'test', built_at: new Date().toISOString(), repository: 'https://github.com/wang4386/CDT-Monitor', release_url: 'https://github.com/wang4386/CDT-Monitor/releases' } })
+  })
+  await page.route('https://api.github.com/repos/wang4386/CDT-Monitor/releases/latest', (route) => route.fulfill({ headers: { 'access-control-allow-origin': '*' }, json: { tag_name: 'v2.0.3' } }))
+
+  await page.goto('/')
+  await page.getByRole('button', { name: '设置', exact: true }).click()
+  await page.getByRole('button', { name: '关于' }).click()
+  await page.getByRole('button', { name: '检查更新' }).click()
+  await expect(page.getByText('GitHub 最新版本：v2.0.3')).toBeVisible()
+  await expect(page.getByText('已通过浏览器网络检查版本')).toBeVisible()
+})
+
 test('dashboard billing, history precision and settings remain usable', async ({ page }, testInfo) => {
   await page.route('**/api/v1/system/init-status', (route) => route.fulfill({ json: { initialized: true } }))
   await page.route('**/api/v1/status', (route) => route.fulfill({ json: {

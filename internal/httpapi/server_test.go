@@ -28,6 +28,9 @@ func TestSecurityHeadersAllowFaviconEndpoint(t *testing.T) {
 	if !strings.Contains(csp, "img-src 'self' data: https://a.favicon.im") {
 		t.Fatalf("favicon endpoint missing from CSP: %s", csp)
 	}
+	if !strings.Contains(csp, "connect-src 'self' https://api.github.com") {
+		t.Fatalf("GitHub API endpoint missing from CSP: %s", csp)
+	}
 }
 
 func TestBeginPasskeyLoginIncludesRegisteredCredentialIDs(t *testing.T) {

@@ -31,6 +31,25 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T
 }
 
+export async function fetchLatestReleaseFromGitHub() {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 4_000)
+  try {
+    const response = await fetch('https://api.github.com/repos/wang4386/CDT-Monitor/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' },
+      credentials: 'omit',
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+    const payload = await response.json().catch(() => null) as { tag_name?: unknown } | null
+    if (!response.ok) throw new Error(`GitHub API 请求失败（HTTP ${response.status}）`)
+    if (!payload || typeof payload.tag_name !== 'string' || !payload.tag_name.trim()) throw new Error('GitHub Release 响应无版本号')
+    return payload.tag_name
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
 export async function waitForJob(jobId: string, onProgress?: (status: string) => void) {
   const deadline = Date.now() + 70_000
   while (Date.now() < deadline) {
