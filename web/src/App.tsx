@@ -34,6 +34,7 @@ const refreshIntervals: SelectOption[] = [
   { value: '60', label: '1 分钟' }, { value: '300', label: '5 分钟' }, { value: '600', label: '10 分钟' },
   { value: '1800', label: '30 分钟' }, { value: '3600', label: '1 小时' },
 ]
+const minCustomAPIInterval = 30
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>('loading')
@@ -160,6 +161,7 @@ function SetupWizard({ onComplete, notify }: { onComplete: () => Promise<void>; 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const strength = Math.min(4, [password.length >= 10, /[A-Z]/.test(password), /[0-9]/.test(password), /[^A-Za-z0-9]/.test(password)].filter(Boolean).length)
+  const setupIntervalPreset = refreshIntervals.map((option) => option.value).includes(String(config.api_interval))
 
   const next = () => {
     setError('')
@@ -204,7 +206,8 @@ function SetupWizard({ onComplete, notify }: { onComplete: () => Promise<void>; 
         {step === 1 && (
           <div className="form-grid">
             <Field label="流量告警阈值"><input type="number" min={1} max={100} value={config.traffic_threshold} onChange={(event) => setConfig({ ...config, traffic_threshold: Number(event.target.value) })} /><span className="suffix">%</span></Field>
-            <SelectField label="状态刷新频率" value={`${config.api_interval}`} options={refreshIntervals.slice(0, 4)} onChange={(value) => setConfig({ ...config, api_interval: Number(value) })} />
+            <SelectField label="状态刷新频率" value={setupIntervalPreset ? `${config.api_interval}` : 'custom'} options={[...refreshIntervals.slice(0, 4), { value: 'custom', label: '自定义' }]} onChange={(value) => setConfig({ ...config, api_interval: value === 'custom' ? minCustomAPIInterval : Number(value) })} />
+            {!setupIntervalPreset && <Field label="自定义间隔"><input type="number" min={minCustomAPIInterval} max={86400} value={config.api_interval} onChange={(event) => setConfig({ ...config, api_interval: Math.max(minCustomAPIInterval, Math.min(86400, Number(event.target.value) || minCustomAPIInterval)) })} /><span className="suffix">秒</span></Field>}
             <div className="field field--wide"><label>停机模式</label><Segmented value={config.shutdown_mode} options={[['KeepCharging', '普通停机'], ['StopCharging', '节省停机']]} onChange={(value) => setConfig({ ...config, shutdown_mode: value as Config['shutdown_mode'] })} /></div>
             <ToggleRow title="抢占式实例保活" icon={<Activity />} checked={config.keep_alive} onChange={(checked) => setConfig({ ...config, keep_alive: checked })} />
             <ToggleRow title="账单与余额显示" icon={<CircleDollarSign />} checked={config.enable_billing} onChange={(checked) => setConfig({ ...config, enable_billing: checked })} />
@@ -427,10 +430,16 @@ function SettingsPanel({ initial, onClose, onSaved, notify }: { initial: Config;
 }
 
 function GeneralSettings({ config, onChange }: { config: Config; onChange: (config: Config) => void }) {
+  const presetIntervals = refreshIntervals.map((option) => option.value)
+  const intervalValue = presetIntervals.includes(String(config.api_interval)) ? String(config.api_interval) : 'custom'
+  const updateInterval = (value: string) => {
+    onChange({ ...config, api_interval: value === 'custom' ? minCustomAPIInterval : Number(value) })
+  }
   return <div className="settings-section"><SectionTitle icon={<Gauge />} title="监控策略" subtitle="AUTOMATION POLICY" />
     <div className="form-grid settings-form">
       <Field label="告警阈值"><input type="number" min={1} max={100} value={config.traffic_threshold} onChange={(event) => onChange({ ...config, traffic_threshold: Number(event.target.value) })} /><span className="suffix">%</span></Field>
-      <SelectField label="API 刷新间隔" value={`${config.api_interval}`} options={refreshIntervals} onChange={(value) => onChange({ ...config, api_interval: Number(value) })} />
+      <SelectField label="API 刷新间隔" value={intervalValue} options={[...refreshIntervals, { value: 'custom', label: '自定义' }]} onChange={updateInterval} />
+      {intervalValue === 'custom' && <Field label="自定义间隔"><input type="number" min={minCustomAPIInterval} max={86400} step={1} value={config.api_interval} onChange={(event) => onChange({ ...config, api_interval: Math.max(minCustomAPIInterval, Math.min(86400, Number(event.target.value) || minCustomAPIInterval)) })} /><span className="suffix">秒</span></Field>}
       <Field label="系统时区"><input value={config.timezone} onChange={(event) => onChange({ ...config, timezone: event.target.value })} /></Field>
       <div className="field"><label>阈值动作</label><Segmented value={config.threshold_action} options={[['stop_and_notify', '停机并通知'], ['notify_only', '仅通知']]} onChange={(value) => onChange({ ...config, threshold_action: value as Config['threshold_action'] })} /></div>
       <div className="field field--wide"><label>停机模式</label><Segmented value={config.shutdown_mode} options={[['KeepCharging', '普通停机'], ['StopCharging', '节省停机']]} onChange={(value) => onChange({ ...config, shutdown_mode: value as Config['shutdown_mode'] })} /></div>
@@ -468,6 +477,9 @@ function AccountFields({ account, onChange, compact = false }: { account: Accoun
 function NotificationSettings({ config, onChange, notify }: { config: Config; onChange: (config: Config) => void; notify: (message: string, tone?: Toast['tone']) => void }) {
   const [channel, setChannel] = useState<'email' | 'telegram' | 'webhook'>('email')
   const [testing, setTesting] = useState(false)
+  const [template, setTemplate] = useState('')
+  const [modal, setModal] = useState<{ provider: string; name: string } | null>(null)
+  const [form, setForm] = useState({ key: '', appToken: '', uid: '', token: '', secret: '' })
   const test = async () => {
     setTesting(true)
     try { const job = await api<Job>(`/api/v1/notifications/test/${channel}`, { method: 'POST', body: '{}' }); await waitForJob(job.id); notify('测试通知已送达', 'success') }
@@ -475,13 +487,35 @@ function NotificationSettings({ config, onChange, notify }: { config: Config; on
     finally { setTesting(false) }
   }
   const n = config.notifications
+  const updateWebhook = (patch: Partial<typeof n.webhook>) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, ...patch } } })
+  const openTemplate = (provider: string) => {
+    if (!provider) return
+    const names: Record<string, string> = { bark: 'Bark', wxpusher: 'WxPusher', dingtalk: '钉钉群机器人', wecom: '微信群机器人' }
+    setForm({ key: '', appToken: '', uid: '', token: '', secret: '' })
+    setModal({ provider, name: names[provider] })
+    setTemplate('')
+  }
+  const applyTemplate = () => {
+    if (!modal) return
+    const { provider } = modal
+    if ((provider === 'bark' || provider === 'wecom') && !form.key) return notify('请填写 Key', 'error')
+    if (provider === 'wxpusher' && (!form.appToken || !form.uid)) return notify('请填写 AppToken 和 UID', 'error')
+    if (provider === 'dingtalk' && !form.token) return notify('请填写机器人 Access Token', 'error')
+    const common = { enabled: true, provider, secret: form.secret || '' }
+    if (provider === 'bark') updateWebhook({ ...common, method: 'GET', request_type: 'JSON', headers: '', url: `https://api.day.app/${encodeURIComponent(form.key)}/#TITLE#/#MSG#`, body: '' })
+    if (provider === 'wxpusher') updateWebhook({ ...common, method: 'POST', request_type: 'JSON', headers: '', url: 'https://wxpusher.zjiecode.com/api/send/message', body: JSON.stringify({ appToken: form.appToken, content: '#MSG#', summary: '#TITLE#', contentType: 1, uids: [form.uid] }, null, 2) })
+    if (provider === 'dingtalk') updateWebhook({ ...common, method: 'POST', request_type: 'JSON', headers: '', url: `https://oapi.dingtalk.com/robot/send?access_token=${encodeURIComponent(form.token)}`, body: JSON.stringify({ msgtype: 'text', text: { content: '#MSG#' } }, null, 2) })
+    if (provider === 'wecom') updateWebhook({ ...common, method: 'POST', request_type: 'JSON', headers: '', url: `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${encodeURIComponent(form.key)}`, body: JSON.stringify({ msgtype: 'text', text: { content: '#MSG#' } }, null, 2) })
+    setChannel('webhook'); setModal(null); notify(`${modal.name} 模板已生成，请检查后保存`, 'success')
+  }
   return <div className="settings-section"><SectionTitle icon={<Bell />} title="通知通道" subtitle="DELIVERY CHANNELS" />
-    {channel === 'webhook' && <WebhookVariablePicker body={n.webhook.body} onBodyChange={(body) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, body } } })} />}
     <div className="channel-tabs"><button className={channel === 'email' ? 'active' : ''} onClick={() => setChannel('email')}><Mail />Email</button><button className={channel === 'telegram' ? 'active' : ''} onClick={() => setChannel('telegram')}><Zap />Telegram</button><button className={channel === 'webhook' ? 'active' : ''} onClick={() => setChannel('webhook')}><Webhook />Webhook</button></div>
+    {channel === 'webhook' && <><WebhookVariablePicker body={n.webhook.body} onBodyChange={(body) => updateWebhook({ body })} /><div className="webhook-template-bar"><div><b>快速生成 Webhook</b><small>选择渠道后填写关键配置</small></div><ElegantSelect id="webhook-template" value={template} options={[{ value: '', label: '手工配置' }, { value: 'bark', label: 'Bark' }, { value: 'wxpusher', label: 'WxPusher' }, { value: 'dingtalk', label: '钉钉群机器人' }, { value: 'wecom', label: '微信群机器人' }]} onChange={openTemplate} searchable={false} searchPlaceholder="" /></div></>}
     {channel === 'email' && <div className="form-grid settings-form"><ToggleRow title="启用 Email" icon={<Mail />} checked={n.email.enabled} onChange={(enabled) => onChange({ ...config, notifications: { ...n, email: { ...n.email, enabled } } })} /><Field label="接收邮箱"><input type="email" value={n.email.to} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, to: event.target.value } } })} /></Field><Field label="SMTP Host"><input value={n.email.host} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, host: event.target.value } } })} /></Field><Field label="端口"><input type="number" value={n.email.port} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, port: Number(event.target.value) } } })} /></Field><SelectField label="安全模式" value={n.email.security} options={[{ value: 'ssl', label: 'SSL' }, { value: 'tls', label: 'STARTTLS' }, { value: 'none', label: '无' }]} onChange={(value) => onChange({ ...config, notifications: { ...n, email: { ...n.email, security: value } } })} /><Field label="用户名"><input value={n.email.username} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, username: event.target.value } } })} /></Field><Field label={`密码${n.email.password_configured ? ' · 已配置' : ''}`}><input type="password" value={n.email.password || ''} placeholder={n.email.password_configured ? '留空保持不变' : ''} onChange={(event) => onChange({ ...config, notifications: { ...n, email: { ...n.email, password: event.target.value } } })} /></Field></div>}
     {channel === 'telegram' && <div className="form-grid settings-form"><ToggleRow title="启用 Telegram" icon={<Zap />} checked={n.telegram.enabled} onChange={(enabled) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, enabled } } })} /><Field label={`Bot Token${n.telegram.token_configured ? ' · 已配置' : ''}`}><input type="password" value={n.telegram.token || ''} placeholder={n.telegram.token_configured ? '留空保持不变' : ''} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, token: event.target.value } } })} /></Field><Field label="Chat ID"><input value={n.telegram.chat_id} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, chat_id: event.target.value } } })} /></Field><SelectField label="代理类型" value={n.telegram.proxy_type} options={[{ value: 'none', label: '直连' }, { value: 'custom', label: '自定义反代' }, { value: 'socks5', label: 'SOCKS5' }]} onChange={(value) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_type: value } } })} />{n.telegram.proxy_type === 'custom' && <Field label="反代 URL"><input value={n.telegram.proxy_url} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_url: event.target.value } } })} /></Field>}{n.telegram.proxy_type === 'socks5' && <><Field label="代理 IP"><input value={n.telegram.proxy_ip} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_ip: event.target.value } } })} /></Field><Field label="代理端口"><input value={n.telegram.proxy_port} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_port: event.target.value } } })} /></Field><Field label="代理账号"><input value={n.telegram.proxy_user} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_user: event.target.value } } })} /></Field><Field label={`代理密码${n.telegram.proxy_password_configured ? ' · 已配置' : ''}`}><input type="password" value={n.telegram.proxy_pass || ''} onChange={(event) => onChange({ ...config, notifications: { ...n, telegram: { ...n.telegram, proxy_pass: event.target.value } } })} /></Field></>}</div>}
-    {channel === 'webhook' && <div className="form-grid settings-form"><ToggleRow title="启用 Webhook" icon={<Webhook />} checked={n.webhook.enabled} onChange={(enabled) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, enabled } } })} /><Field label="Webhook URL"><input value={n.webhook.url} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, url: event.target.value } } })} /></Field><SelectField label="请求方式" value={n.webhook.method} options={[{ value: 'GET', label: 'GET' }, { value: 'POST', label: 'POST' }]} onChange={(value) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, method: value } } })} /><SelectField label="请求类型" value={n.webhook.request_type} options={[{ value: 'JSON', label: 'JSON' }, { value: 'FORM', label: 'FORM' }]} onChange={(value) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, request_type: value } } })} /><Field label="自定义 Headers"><textarea value={n.webhook.headers || ''} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, headers: event.target.value } } })} placeholder='{"Authorization":"Bearer …"}' /></Field><Field label="Body 模板"><textarea value={n.webhook.body} onChange={(event) => onChange({ ...config, notifications: { ...n, webhook: { ...n.webhook, body: event.target.value } } })} placeholder='{"title":"#TITLE#","message":"#MSG#"}' /></Field></div>}
+    {channel === 'webhook' && <div className="form-grid settings-form"><ToggleRow title="启用 Webhook" icon={<Webhook />} checked={n.webhook.enabled} onChange={(enabled) => updateWebhook({ enabled })} /><Field label="Webhook URL"><input value={n.webhook.url} onChange={(event) => updateWebhook({ url: event.target.value })} /></Field>{n.webhook.provider === 'dingtalk' && <Field label={`钉钉加签密钥${n.webhook.secret_configured ? ' · 已配置' : ''}`}><input type="password" value={n.webhook.secret || ''} placeholder={n.webhook.secret_configured ? '留空保持不变' : '可选'} onChange={(event) => updateWebhook({ secret: event.target.value })} /></Field>}<SelectField label="请求方式" value={n.webhook.method} options={[{ value: 'GET', label: 'GET' }, { value: 'POST', label: 'POST' }]} onChange={(value) => updateWebhook({ method: value })} /><SelectField label="请求类型" value={n.webhook.request_type} options={[{ value: 'JSON', label: 'JSON' }, { value: 'FORM', label: 'FORM' }]} onChange={(value) => updateWebhook({ request_type: value })} /><Field label="自定义 Headers"><textarea value={n.webhook.headers || ''} onChange={(event) => updateWebhook({ headers: event.target.value })} placeholder='{"Authorization":"Bearer …"}' /></Field><Field label="Body 模板"><textarea value={n.webhook.body} onChange={(event) => updateWebhook({ body: event.target.value })} placeholder='{"title":"#TITLE#","message":"#MSG#"}' /></Field></div>}
     <button className="button button--secondary" disabled={testing} onClick={() => void test()}>{testing ? <LoaderCircle className="spin" /> : <Bell />}发送测试</button>
+    {modal && <WebhookTemplateModal name={modal.name} provider={modal.provider} form={form} onChange={setForm} onClose={() => setModal(null)} onApply={applyTemplate} />}
   </div>
 }
 
@@ -491,8 +525,13 @@ function WebhookVariablePicker({ body, onBodyChange }: { body: string; onBodyCha
     ['#MAX_TRAFFIC#', '阈值 %'], ['#INSTANCE#', '实例 ID'], ['#STATUS#', '实例状态'], ['#TYPE#', '事件类型'],
     ['#CREATED_AT#', 'UTC 时间'],
   ]
-  const insert = (value: string) => onBodyChange(body + value)
+  const insert = (value: string) => onBodyChange(body + (body && !body.endsWith('\n') ? '\n' : '') + value)
   return <div className="webhook-variables"><div className="webhook-variables__head"><span>可用变量</span><small>点击插入到 Body 末尾，也可直接写入 URL</small></div><div className="webhook-variables__list">{variables.map(([value, label]) => <button type="button" key={value} onClick={() => insert(value)} title={`插入 ${value}`}><code>{value}</code><span>{label}</span></button>)}</div></div>
+}
+
+function WebhookTemplateModal({ name, provider, form, onChange, onClose, onApply }: { name: string; provider: string; form: { key: string; appToken: string; uid: string; token: string; secret: string }; onChange: (value: typeof form) => void; onClose: () => void; onApply: () => void }) {
+  const field = (key: keyof typeof form, label: string, type = 'text', placeholder = '') => <Field label={label}><input type={type} value={form[key]} placeholder={placeholder} onChange={(event) => onChange({ ...form, [key]: event.target.value })} /></Field>
+  return <div className="modal-layer modal-layer--nested" role="dialog" aria-modal="true" aria-label={`${name} 模板配置`}><div className="modal-scrim" onClick={onClose} /><section className="glass-card webhook-template-modal"><header><div><p className="eyebrow">WEBHOOK TEMPLATE</p><h2>配置 {name}</h2></div><IconButton label="关闭" onClick={onClose}><X /></IconButton></header><p className="muted">填写渠道关键配置后，系统会自动生成 URL、Headers 和 Body。</p><div className="form-grid settings-form">{provider === 'bark' && field('key', 'Bark Key', 'text', '设备 Key')}{provider === 'wxpusher' && <>{field('appToken', 'AppToken', 'text', 'AT_…')}{field('uid', 'UID', 'text', 'UID_…')}</>}{provider === 'dingtalk' && <>{field('token', '机器人 Access Token', 'text', 'access_token')}{field('secret', '加签密钥（可选）', 'password', 'SEC…')}</>}{provider === 'wecom' && field('key', '微信群机器人 Key', 'text', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx')}</div><footer className="settings-footer"><button className="button button--secondary" onClick={onClose}>取消</button><button className="button button--primary" onClick={onApply}><Check />生成 Webhook</button></footer></section></div>
 }
 
 function APIKeySettings({ notify }: { notify: (message: string, tone?: Toast['tone']) => void }) {

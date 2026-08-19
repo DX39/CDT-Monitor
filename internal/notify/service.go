@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -177,6 +180,20 @@ func (s *Service) sendTelegram(ctx context.Context, config domain.TelegramConfig
 func (s *Service) sendWebhook(ctx context.Context, config domain.WebhookConfig, event domain.NotificationEvent) error {
 	replacements := replacements(event)
 	endpoint := replaceTemplate(config.URL, replacements, true)
+	if strings.EqualFold(config.Provider, "dingtalk") && config.Secret != "" {
+		timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
+		mac := hmac.New(sha256.New, []byte(config.Secret))
+		_, _ = mac.Write([]byte(timestamp + "\n" + config.Secret))
+		parsed, err := url.Parse(endpoint)
+		if err != nil {
+			return err
+		}
+		query := parsed.Query()
+		query.Set("timestamp", timestamp)
+		query.Set("sign", base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+		parsed.RawQuery = query.Encode()
+		endpoint = parsed.String()
+	}
 	method := strings.ToUpper(config.Method)
 	if method != http.MethodPost {
 		method = http.MethodGet

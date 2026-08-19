@@ -60,12 +60,15 @@ type TelegramConfig struct {
 }
 
 type WebhookConfig struct {
-	Enabled bool   `json:"enabled"`
-	URL     string `json:"url"`
-	Method  string `json:"method"`
-	Type    string `json:"request_type"`
-	Headers string `json:"headers,omitempty"`
-	Body    string `json:"body"`
+	Enabled          bool   `json:"enabled"`
+	URL              string `json:"url"`
+	Method           string `json:"method"`
+	Type             string `json:"request_type"`
+	Headers          string `json:"headers,omitempty"`
+	Body             string `json:"body"`
+	Provider         string `json:"provider,omitempty"`
+	Secret           string `json:"secret,omitempty"`
+	SecretConfigured bool   `json:"secret_configured"`
 }
 
 type NotificationConfig struct {

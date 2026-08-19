@@ -114,19 +114,18 @@ h3 { letter-spacing: 0; }
 .select-control.open .select-trigger, .select-search:focus-within { background: #fff; box-shadow: inset 0 0 0 1.5px var(--ink), 0 0 0 3px rgba(50,103,178,.08); }
 .select-trigger__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-trigger code { color: var(--muted-soft); font-size: 11px; font-weight: 650; white-space: nowrap; }
-.select-chevron { width: 17px; height: 17px; color: #5f6670; pointer-events: none; transition: transform var(--duration-base) var(--ease-out), color var(--duration-fast) ease; }
+.select-chevron { grid-column: 3; width: 17px; height: 17px; color: #5f6670; pointer-events: none; transition: transform var(--duration-base) var(--ease-out), color var(--duration-fast) ease; }
 .select-control.open .select-chevron { color: var(--ink); transform: rotate(180deg); }
 .select-search { grid-template-columns: 18px minmax(0, 1fr) 18px; }
 .select-search > svg:first-child { width: 17px; height: 17px; color: var(--muted-soft); }
 .select-search input { width: 100%; min-width: 0; height: 50px; border: 0; outline: 0; color: var(--ink); background: transparent; }
 .select-search input:focus-visible { outline: 0; }
 .select-search input::placeholder { color: #878e98; }
-.select-popover { position: fixed; z-index: 120; padding: 6px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid rgba(163,169,177,.38); border-radius: 14px; background: rgba(253,253,254,.98); box-shadow: 0 28px 54px -30px rgba(20,27,38,.56), inset 0 1px 0 rgba(255,255,255,.95); }
+.select-popover { position: fixed; z-index: 120; padding: 8px; display: grid; gap: 4px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid rgba(163,169,177,.38); border-radius: 14px; background: rgba(253,253,254,.98); box-shadow: 0 28px 54px -30px rgba(20,27,38,.56), inset 0 1px 0 rgba(255,255,255,.95); }
 .select-popover--up { transform: translateY(-100%); }
 .select-popover::-webkit-scrollbar { width: 8px; }
 .select-popover::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 99px; background: #aeb4bc; background-clip: padding-box; }
 .select-option { width: 100%; min-height: 48px; border: 0; border-radius: 8px; padding: 0 11px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; color: var(--ink); background: transparent; cursor: pointer; text-align: left; transition: background var(--duration-fast) ease, color var(--duration-fast) ease; }
-.select-option + .select-option { box-shadow: 0 -1px rgba(173,178,184,.22); }
 .select-option:hover, .select-option.active { background: #eef3f8; }
 .select-option[aria-selected="true"] { background: var(--blue-soft); }
 .select-option__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 760; }
@@ -256,6 +255,11 @@ h3 { letter-spacing: 0; }
 .empty-state span { display: flex; gap: 5px; align-items: center; color: #1c1c1e; font-size: 12px; font-weight: 750; margin-top: 8px; }
 
 .modal-layer { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; }
+.modal-layer--nested { z-index: 70; }
+.webhook-template-modal { position: relative; width: min(560px, 96vw); max-height: min(680px, 92vh); overflow: auto; padding: 26px; border-radius: 22px; animation: modal-in .32s var(--ease-emphasis) both; }
+.webhook-template-modal > header { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
+.webhook-template-modal h2 { margin: 0; font-size: 22px; }
+.webhook-template-modal .settings-footer { margin: 22px -26px -26px; }
 .modal-scrim { position: absolute; inset: 0; background: rgba(35, 38, 42, .28); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); animation: scrim-in .24s ease both; }
 .settings-panel { position: relative; width: min(1180px, 96vw); height: min(850px, 94vh); border-radius: 26px; overflow: hidden; display: grid; grid-template-rows: auto auto 1fr auto; background: rgba(248, 249, 250, .91); animation: modal-in .46s var(--ease-emphasis) both; }
 .settings-panel > header, .chart-modal > header { display: flex; align-items: center; justify-content: space-between; padding: 25px 28px 18px; }
@@ -295,6 +299,11 @@ h3 { letter-spacing: 0; }
 .webhook-variables__list button:hover { background: rgba(207,212,218,.82); color: var(--ink); transform: translateY(-1px); }
 .webhook-variables__list code { font-size: 10px; font-weight: 800; }
 .webhook-variables__list span { font-size: 9px; }
+.webhook-template-modal .form-grid { margin-top: 18px; }
+.webhook-template-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 20px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.58); }
+.webhook-template-bar b { display: block; font-size: 12px; }
+.webhook-template-bar small { display: block; margin-top: 3px; color: var(--muted-soft); font-size: 10px; }
+.webhook-template-bar .select-control { min-width: 190px; }
 .key-create { display: grid; grid-template-columns: minmax(220px, 1fr) 1.5fr auto; align-items: end; gap: 18px; padding: 20px; border-radius: 16px; background: rgba(255,255,255,.58); box-shadow: 0 0 0 1px var(--line); }
 .scope-row { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 4px; }
 .scope-chip { position: relative; height: 38px; padding: 0 13px; display: flex; align-items: center; border-radius: 9px; background: rgba(225,229,233,.72); color: #6f747d; font-size: 11px; font-weight: 750; cursor: pointer; transition: background var(--duration-fast) ease, color var(--duration-fast) ease, transform var(--duration-fast) var(--ease-out); }
@@ -416,6 +425,10 @@ h3 { letter-spacing: 0; }
   .account-billing { flex: 1; min-width: 0; }
   .modal-layer { padding: 12px; }
   .settings-panel { width: 100%; height: calc(100dvh - 24px); max-height: calc(100dvh - 24px); border-radius: 20px; }
+  .webhook-template-modal { padding: 20px; }
+  .webhook-template-modal .settings-footer { margin: 18px -20px -20px; }
+  .webhook-template-bar { align-items: stretch; flex-direction: column; gap: 10px; }
+  .webhook-template-bar .select-control { min-width: 0; }
   .settings-panel > header { padding: 20px 18px 15px; }
   .settings-tabs { margin: 0 14px; overflow-x: auto; }
   .settings-tabs button { min-width: 62px; flex: 0 0 62px; font-size: 9px; flex-direction: column; gap: 4px; }

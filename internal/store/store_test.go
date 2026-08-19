@@ -81,6 +81,34 @@ func TestAccountIDsRemainStable(t *testing.T) {
 	}
 }
 
+func TestAPIIntervalMinimum(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	config := domain.Config{AdminPassword: "Strong-Password-42!", TrafficThreshold: 95, ShutdownMode: "KeepCharging", ThresholdAction: "stop_and_notify", APIInterval: 29, Timezone: "Asia/Shanghai"}
+	if err = st.Setup(ctx, config); err == nil {
+		t.Fatal("expected API interval below 30 seconds to be rejected")
+	}
+
+	config.APIInterval = 30
+	if err = st.Setup(ctx, config); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.db.ExecContext(ctx, `UPDATE settings SET value='1' WHERE key='api_interval'`); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := st.GetConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.APIInterval != minAPIIntervalSeconds {
+		t.Fatalf("expected legacy interval to normalize to %d seconds, got %d", minAPIIntervalSeconds, loaded.APIInterval)
+	}
+}
+
 func TestAPIKeyScopesAndRevocation(t *testing.T) {
 	st, err := Open(t.TempDir())
 	if err != nil {

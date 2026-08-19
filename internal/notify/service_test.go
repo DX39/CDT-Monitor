@@ -1,6 +1,13 @@
 package notify
 
 import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -32,6 +39,40 @@ func TestReplacementsExposeWebhookVariables(t *testing.T) {
 	}
 	if values["#CREATED_AT#"] != "2026-07-23T00:09:10Z" {
 		t.Fatalf("#CREATED_AT# = %q", values["#CREATED_AT#"])
+	}
+}
+
+func TestDingTalkWebhookAddsSignature(t *testing.T) {
+	var timestamp, signature string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		timestamp = r.URL.Query().Get("timestamp")
+		signature = r.URL.Query().Get("sign")
+		if timestamp == "" || signature == "" {
+			t.Error("DingTalk signature query parameters are missing")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	service := New()
+	service.httpClient = server.Client()
+	secret := "SEC-test"
+	err := service.sendWebhook(context.Background(), domain.WebhookConfig{
+		Enabled: true, Provider: "dingtalk", Secret: secret, URL: server.URL, Method: "POST", Type: "JSON",
+		Body: `{"msgtype":"text","text":{"content":"#MSG#"}}`,
+	}, domain.NotificationEvent{Title: "标题", Summary: "消息", CreatedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := strconv.ParseInt(timestamp, 10, 64); err != nil {
+		t.Fatalf("invalid timestamp %q: %v", timestamp, err)
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(timestamp + "\n" + secret))
+	want := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	if signature != want {
+		t.Fatalf("signature = %q, want %q", signature, want)
 	}
 }
 

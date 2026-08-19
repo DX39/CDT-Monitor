@@ -13,11 +13,14 @@ import (
 	"github.com/wang4386/CDT-Monitor/internal/security"
 )
 
+const minAPIIntervalSeconds = 30
+
 var sensitiveSettings = map[string]bool{
 	"notify_password":      true,
 	"notify_tg_token":      true,
 	"notify_tg_proxy_pass": true,
 	"notify_wh_headers":    true,
+	"notify_wh_secret":     true,
 }
 
 func boolSetting(settings map[string]string, key string, fallback bool) bool {
@@ -75,13 +78,17 @@ func (s *Store) GetConfig(ctx context.Context) (domain.Config, error) {
 	if accounts == nil {
 		accounts = []domain.Account{}
 	}
+	apiInterval := intSetting(settings, "api_interval", 600)
+	if apiInterval < minAPIIntervalSeconds {
+		apiInterval = minAPIIntervalSeconds
+	}
 	config := domain.Config{
 		TrafficThreshold:   intSetting(settings, "traffic_threshold", 95),
 		EnableScheduleMail: boolSetting(settings, "enable_schedule_email", false),
 		ShutdownMode:       valueOr(settings, "shutdown_mode", "KeepCharging"),
 		ThresholdAction:    valueOr(settings, "threshold_action", "stop_and_notify"),
 		KeepAlive:          boolSetting(settings, "keep_alive", false),
-		APIInterval:        intSetting(settings, "api_interval", 600),
+		APIInterval:        apiInterval,
 		EnableBilling:      boolSetting(settings, "enable_billing", false),
 		Timezone:           valueOr(settings, "timezone", "Asia/Shanghai"),
 		Accounts:           accounts,
@@ -110,12 +117,15 @@ func (s *Store) GetConfig(ctx context.Context) (domain.Config, error) {
 				ProxyConfigured: settings["notify_tg_proxy_pass"] != "",
 			},
 			Webhook: domain.WebhookConfig{
-				Enabled: boolSetting(settings, "notify_wh_enabled", false),
-				URL:     valueOr(settings, "notify_wh_url", ""),
-				Method:  valueOr(settings, "notify_wh_method", "GET"),
-				Type:    valueOr(settings, "notify_wh_request_type", "JSON"),
-				Headers: valueOr(settings, "notify_wh_headers", ""),
-				Body:    valueOr(settings, "notify_wh_body", ""),
+				Enabled:          boolSetting(settings, "notify_wh_enabled", false),
+				URL:              valueOr(settings, "notify_wh_url", ""),
+				Method:           valueOr(settings, "notify_wh_method", "GET"),
+				Type:             valueOr(settings, "notify_wh_request_type", "JSON"),
+				Headers:          valueOr(settings, "notify_wh_headers", ""),
+				Body:             valueOr(settings, "notify_wh_body", ""),
+				Provider:         valueOr(settings, "notify_wh_provider", "generic"),
+				Secret:           valueOr(settings, "notify_wh_secret", ""),
+				SecretConfigured: settings["notify_wh_secret"] != "",
 			},
 		},
 	}
@@ -163,8 +173,8 @@ func (s *Store) saveConfig(ctx context.Context, config domain.Config, setup bool
 	if config.ThresholdAction != "stop_and_notify" && config.ThresholdAction != "notify_only" {
 		return errors.New("invalid threshold action")
 	}
-	if config.APIInterval < 60 || config.APIInterval > 86400 {
-		return errors.New("api interval must be between 60 and 86400 seconds")
+	if config.APIInterval < minAPIIntervalSeconds || config.APIInterval > 86400 {
+		return errors.New("api interval must be between 30 and 86400 seconds")
 	}
 	if config.Timezone == "" {
 		config.Timezone = "Asia/Shanghai"
@@ -213,6 +223,7 @@ func (s *Store) saveConfig(ctx context.Context, config domain.Config, setup bool
 			"notify_wh_method":       config.Notifications.Webhook.Method,
 			"notify_wh_request_type": config.Notifications.Webhook.Type,
 			"notify_wh_body":         config.Notifications.Webhook.Body,
+			"notify_wh_provider":     config.Notifications.Webhook.Provider,
 		}
 		for key, value := range values {
 			if err := putSettingTx(ctx, tx, key, value); err != nil {
@@ -224,6 +235,7 @@ func (s *Store) saveConfig(ctx context.Context, config domain.Config, setup bool
 			"notify_tg_token":      config.Notifications.Telegram.Token,
 			"notify_tg_proxy_pass": config.Notifications.Telegram.ProxyPass,
 			"notify_wh_headers":    config.Notifications.Webhook.Headers,
+			"notify_wh_secret":     config.Notifications.Webhook.Secret,
 		} {
 			if value == "" {
 				continue

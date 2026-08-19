@@ -938,6 +938,9 @@ func applyConfigDefaults(config *domain.Config) {
 	if config.Notifications.Webhook.Type == "" {
 		config.Notifications.Webhook.Type = "JSON"
 	}
+	if config.Notifications.Webhook.Provider == "" {
+		config.Notifications.Webhook.Provider = "generic"
+	}
 }
 
 func scrubConfig(config *domain.Config) {
@@ -946,6 +949,7 @@ func scrubConfig(config *domain.Config) {
 	config.Notifications.Telegram.Token = ""
 	config.Notifications.Telegram.ProxyPass = ""
 	config.Notifications.Webhook.Headers = ""
+	config.Notifications.Webhook.Secret = ""
 	for index := range config.Accounts {
 		config.Accounts[index].AccessKeySecret = ""
 	}
