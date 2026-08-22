@@ -1,9 +1,9 @@
 name: Build Android APK
 
 on:
-  workflow_dispatch: # 支持在 GitHub 网页手动点击触发
+  workflow_dispatch:
   push:
-    branches: [ main ] # 当推送代码到 main 分支时自动触发
+    branches: [ main ]
 
 jobs:
   build:
@@ -18,19 +18,29 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
-      - name: Grant Execute Permission for Gradlew
-        working-directory: ./android-widget
-        run: chmod +x gradlew
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Build Debug APK
-        working-directory: ./android-widget
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: |
+          # 自动定位到 android-widget 目录
+          if [ -d "android-widget" ]; then
+            cd android-widget
+          fi
+
+          # 缺少 gradlew 脚本时自动通过全局 gradle 生成
+          if [ ! -f "gradlew" ]; then
+            echo "gradlew not found, generating Gradle wrapper..."
+            gradle wrapper
+          fi
+
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: CDT-Monitor-Widget-Debug
-          path: android-widget/app/build/outputs/apk/debug/*.apk
+          path: "**/build/outputs/apk/debug/*.apk"
           retention-days: 7
